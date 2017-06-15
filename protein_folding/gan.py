@@ -9,6 +9,7 @@ import gumbel_softmax as GS
 
 USE_GUMBEL = True
 LOGGING = False
+EXTRA_GEN_TRAIN = True
 
 align_name = 'FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
 
@@ -16,18 +17,14 @@ print "Importing multiple sequence alignment..."
 MSA = MultipleSequenceAlignment('./alignments/'+align_name)
 print
 
-
 print "Setting up graph..."
-
-
 tau = tf.Variable(1.0, name="temperature")
 
-
 batch_size = 150
-train_steps = 1000
+train_steps = 10000
 Z_dim = 100
 
-n_input = MSA.n_input
+n_input = MSA.seq_size
 print "Length of an protein seq: {}".format(n_input)
 
 n_hidden = 183
@@ -78,7 +75,7 @@ def generator(z, temp):
         G_log_prob = tf.matmul(G_h1, G_W2) + G_b2
 
         with tf.variable_scope('gumbel_softmax'):
-        #    if USE_GUMBEL:
+        #   if USE_GUMBEL:
             G_gumbel = GS.gumbel_softmax(G_log_prob, temp)
             return G_gumbel
 
@@ -111,6 +108,7 @@ with tf.variable_scope('discriminator'):
 # Alternative losses:
 # -------------------
 
+# is sigmoid cross entropy the wrong one?
 
 with tf.variable_scope('discriminator_loss'):
     D_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits( \
@@ -154,10 +152,10 @@ if not os.path.exists('out/'):
     os.makedirs('out/')
 
 
-ANNEAL_RATE = .00015
-MIN_TEMP=0.3 # TODO: why? what's wrong with too small of a temp?
+ANNEAL_RATE = .0001
+MIN_TEMP=0.4 # TODO: why? what's wrong with too small of a temp?
 
-tau_0 = 1.0
+tau_0 = 5.0
 temp = tau_0
 
 print "Training..."
@@ -182,8 +180,6 @@ for it in xrange(train_steps):
     _, G_loss_curr, G_summary = sess.run([G_solver, G_loss, G_loss_summary], feed_dict={Z: sample_Z(batch_size, Z_dim), tau: temp})
     # when I don't pass in tau to this feed dict ^ , it still runs... why?
 
-    writer.add_summary(G_summary, it)
-    
     if it % 1000 == 0:
         print('Iter: {}'.format(it / 1000))
         print('D loss: {:.4}'. format(D_loss_curr))
@@ -192,3 +188,12 @@ for it in xrange(train_steps):
         start_time = time.time()
         
         print()
+
+    if EXTRA_GEN_TRAIN:
+        X_mb = MSA.next_batch(batch_size)
+        _, G_loss_curr, G_summary = sess.run([G_solver, G_loss, G_loss_summary], feed_dict={Z: sample_Z(batch_size, Z_dim), tau: temp})
+        it += 1
+
+    writer.add_summary(G_summary, it)
+    
+    
