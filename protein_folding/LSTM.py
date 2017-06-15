@@ -7,11 +7,11 @@ from tensorflow.contrib import rnn
 
 from model_w_label import MultipleSequenceAlignment
 
-"""
+
 def lazy_property(function):
-    This is a wrapper to memoize properties
-    so we don't evaluate until we need them....
-    read this: https://pypi.python.org/pypi/lazy-property
+    #This is a wrapper to memoize properties
+    #so we don't evaluate until we need them....
+    #read this: https://pypi.python.org/pypi/lazy-property
     attribute = '_' + function.__name__
 
     @property
@@ -24,7 +24,7 @@ def lazy_property(function):
                 import pdb;pdb.set_trace()
         return getattr(self, attribute)
     return wrapper
-"""
+
 
 class VariableSequenceLabelling:
 
@@ -33,26 +33,37 @@ class VariableSequenceLabelling:
         self.target = target
         self._num_hidden = num_hidden
         self._num_layers = num_layers
+        self.first_cell = True
         self.prediction
         self.error
         self.optimize
 
-    @property
+
+    @lazy_property
     def length(self):
         used = tf.sign(tf.reduce_max(tf.abs(self.data), reduction_indices=2))
         length = tf.reduce_sum(used, reduction_indices=1)
         length = tf.cast(length, tf.int32)
         return length  
         
-    @property
+    @lazy_property
     def prediction(self):
         # Recurrent network.
+
+        if self.first_cell:
+            print "FIRST CELL"
+            cell = rnn.BasicLSTMCell(num_units=self._num_hidden)
+        else:
+            print "NON-FIRST CELL!!"
+            cell = rnn.BasicLSTMCell(num_units=self._num_hidden, reuse=tf.get_variable_scope().reuse)
+            self.first_cell = False
+
         output, _ = tf.nn.dynamic_rnn(
-            rnn.BasicLSTMCell(self._num_hidden),
-            self.data,
-            dtype=tf.float32,
-            sequence_length=self.length
-        )
+            cell=cell,
+            inputs=self.data,
+            sequence_length=self.length,
+            dtype=tf.float32
+        ) # You get value error if input is none or an empty list
         # Softmax layer.
         max_length = int(self.target.get_shape()[1])
         num_classes = int(self.target.get_shape()[2])
@@ -100,16 +111,16 @@ class VariableSequenceLabelling:
         bias = tf.constant(0.1, shape=[out_size])
         return tf.Variable(weight), tf.Variable(bias)
 
-
+"""
 def get_dataset():
-    """Read dataset and flatten images."""
+    # Read dataset and flatten images.
     dataset = sets.Ocr()
     dataset = sets.OneHot(dataset.target, depth=2)(dataset, columns=['target'])
     dataset['data'] = dataset.data.reshape(
         dataset.data.shape[:-2] + (-1,)).astype(float)
     train, test = sets.Split(0.66)(dataset)
     return train, test
-
+"""
 
 if __name__ == '__main__':
     align_name = 'FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
@@ -130,8 +141,17 @@ if __name__ == '__main__':
 
     model = VariableSequenceLabelling(data, target)
 
+
+    log_dir_name = 'LSTM_graph_logs/' + datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + '/'
+
+    if not os.path.exists(dir_name):
+        os.makedirs(dir_name)
+
+    writer = tf.summary.FileWriter('./'+log_dir_name)
     sess = tf.Session()
-    sess.run(tf.initialize_all_variables())
+    writer.add_graph(sess.graph)
+
+    sess.run(tf.global_variables_initializer())
     for epoch in range(10):
         for _ in range(100):
             batch_data, batch_target = MSA.next_batch(10)
