@@ -7,11 +7,11 @@ from tensorflow.contrib import rnn
 
 from model_w_label import MultipleSequenceAlignment
 
-
+"""
 def lazy_property(function):
-    """I think this is a wrapper to memoize properties
+    This is a wrapper to memoize properties
     so we don't evaluate until we need them....
-    read this: https://pypi.python.org/pypi/lazy-property"""
+    read this: https://pypi.python.org/pypi/lazy-property
     attribute = '_' + function.__name__
 
     @property
@@ -24,7 +24,7 @@ def lazy_property(function):
                 import pdb;pdb.set_trace()
         return getattr(self, attribute)
     return wrapper
-
+"""
 
 class VariableSequenceLabelling:
 
@@ -37,21 +37,21 @@ class VariableSequenceLabelling:
         self.error
         self.optimize
 
-    @lazy_property
+    @property
     def length(self):
         used = tf.sign(tf.reduce_max(tf.abs(self.data), reduction_indices=2))
         length = tf.reduce_sum(used, reduction_indices=1)
         length = tf.cast(length, tf.int32)
-        return length
-
-    @lazy_property
+        return length  
+        
+    @property
     def prediction(self):
         # Recurrent network.
         output, _ = tf.nn.dynamic_rnn(
             rnn.BasicLSTMCell(self._num_hidden),
             self.data,
             dtype=tf.float32,
-            sequence_length=self.length,
+            sequence_length=self.length
         )
         # Softmax layer.
         max_length = int(self.target.get_shape()[1])
@@ -63,29 +63,26 @@ class VariableSequenceLabelling:
         prediction = tf.reshape(prediction, [-1, max_length, num_classes])
         return prediction
 
-    @lazy_property
-    def cost(output, target):
-        # Compute cross entropy for each amino acid.
-        cross_entropy = target * tf.log(output)
+
+    @property
+    def cost(self):
+        # Compute cross entropy for each frame.
+        cross_entropy = self.target * tf.log(self.prediction)
         cross_entropy = -tf.reduce_sum(cross_entropy, reduction_indices=2)
-        mask = tf.sign(tf.reduce_max(tf.abs(target), reduction_indices=2))
-
-        # Mask out the cross entropy of the terms that appear after the end of the seq
+        mask = tf.sign(tf.reduce_max(tf.abs(self.target), reduction_indices=2))
         cross_entropy *= mask
-
         # Average over actual sequence lengths.
-        cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=1) # Sum cross ents
-        cross_entropy /= tf.reduce_sum(mask, reduction_indices=1) # Divide by true len of seq
-        
+        cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=1)
+        cross_entropy /= tf.cast(self.length, tf.float32)
         return tf.reduce_mean(cross_entropy)
 
-    @lazy_property
+    @property
     def optimize(self):
         learning_rate = 0.0003
         optimizer = tf.train.AdamOptimizer(learning_rate)
         return optimizer.minimize(self.cost)
 
-    @lazy_property
+    @property
     def error(self):
         mistakes = tf.not_equal(
             tf.argmax(self.target, 2), tf.argmax(self.prediction, 2))
