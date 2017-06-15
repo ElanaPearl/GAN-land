@@ -1,9 +1,11 @@
 # Much code adopted from: danijar.com/variable-sequence-lengths-in-tensorflow/
 import functools
-import sets
 import tensorflow as tf
 from tensorflow.contrib import rnn
-from tensorflow.contrib.rnn import core_rnn_cell
+#from tensorflow.contrib.rnn import dynamic_rnn
+#from tensorflow.contrib.rnn import core_rnn_cell
+
+from model_w_label import MultipleSequenceAlignment
 
 
 def lazy_property(function):
@@ -16,7 +18,10 @@ def lazy_property(function):
     @functools.wraps(function)
     def wrapper(self):
         if not hasattr(self, attribute):
-            setattr(self, attribute, function(self))
+            try:
+                setattr(self, attribute, function(self))
+            except:
+                import pdb;pdb.set_trace()
         return getattr(self, attribute)
     return wrapper
 
@@ -42,8 +47,8 @@ class VariableSequenceLabelling:
     @lazy_property
     def prediction(self):
         # Recurrent network.
-        output, _ = rnn.dynamic_rnn(
-            rnn_cell.GRUCell(self._num_hidden),
+        output, _ = tf.nn.dynamic_rnn(
+            rnn.BasicLSTMCell(self._num_hidden),
             self.data,
             dtype=tf.float32,
             sequence_length=self.length,
@@ -110,17 +115,30 @@ def get_dataset():
 
 
 if __name__ == '__main__':
-    train, test = get_dataset()
-    _, length, image_size = train.data.shape
-    num_classes = train.target.shape[2]
-    data = tf.placeholder(tf.float32, [None, length, image_size])
-    target = tf.placeholder(tf.float32, [None, length, num_classes])
+    align_name = 'FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
+    MSA = MultipleSequenceAlignment('./alignments/'+align_name)
+
+    # length of longest sequence
+    # output size should be self.alphabet_len (21 including END char)
+    length = MSA.max_seq_len
+
+    seq_len = MSA.alphabet_len
+    # Add +1 for end of seq maybe
+    #output_seq_len = MSA.alphabet_len
+
+
+    data = tf.placeholder(tf.float32, [None, length, seq_len])
+    target = tf.placeholder(tf.float32, [None, length, seq_len])
+    test_data, test_target = MSA.get_test_data()
+
     model = VariableSequenceLabelling(data, target)
+
     sess = tf.Session()
     sess.run(tf.initialize_all_variables())
     for epoch in range(10):
         for _ in range(100):
-            batch = train.sample(10)
-            sess.run(model.optimize, {data: batch.data, target: batch.target})
-        error = sess.run(model.error, {data: test.data, target: test.target})
+            batch_data, batch_target = MSA.next_batch(10)
+
+            sess.run(model.optimize, {data: batch_data, target: batch_target})
+        error = sess.run(model.error, {data: test_data, target: test_target})
         print('Epoch {:2d} error {:3.1f}%'.format(epoch + 1, 100 * error))

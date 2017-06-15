@@ -1,4 +1,5 @@
 import numpy as np
+import random
 
 class MultipleSequenceAlignment:
     def __init__(self, filename, include_gaps=True):
@@ -10,10 +11,19 @@ class MultipleSequenceAlignment:
         self.alphabet_map = {s: i for i, s in enumerate(self.alphabet)}
 
         # Dictionary: key = seq_id, value = array of seq chars
-        self.seqs = self._read_data()
+        self.data_seqs = self._read_data()
 
-        self.max_seq_len = max(len(seq) for seq in self.seqs.values())
+        self.max_seq_len = max(len(seq) for seq in self.data_seqs.values())
         self.seq_size = self.max_seq_len*self.alphabet_len
+
+
+        # TODO: make this test set getting process into an elegant function
+        self.test_size = len(self.data_seqs)/5
+        test_seq_ids = random.sample(self.data_seqs.keys(), self.test_size)
+        self.test_seqs = dict(zip(test_seq_ids, [self.data_seqs[k] for k in test_seq_ids]))
+
+        for k in test_seq_ids:
+            del self.data_seqs[k]
 
 
     def _add_clean_seq(self, curr_id, curr_seq):
@@ -70,15 +80,15 @@ class MultipleSequenceAlignment:
         return one_hot_seq
 
 
-    def next_batch(self, batch_size):
+    def next_batch(self, batch_size, test=False):
         mb = np.zeros((batch_size, self.max_seq_len, self.alphabet_len))
 
         for i in range(batch_size):  
-            if len(self.seqs) > 0:
-                seq_id = random.choice(self.seqs.keys())
-                x = self._idx_to_one_hot(self.seqs[seq_id])
+            if len(self.data_seqs) > 0:
+                seq_id = random.choice(self.data_seqs.keys())
+                x = self._idx_to_one_hot(self.data_seqs[seq_id])
                 mb[i] = x
-                del self.seqs[seq_id] # Pop the seq off so that you don't use it again
+                del self.data_seqs[seq_id] # Pop the seq off so that you don't use it again
             else:
                 break
         
@@ -89,6 +99,16 @@ class MultipleSequenceAlignment:
         # First trim the first aa off, then add an extra 0 for 'end character'
         # TOO: Should this character actually have its own character aka be 0
         # one hot encoded or just be a 0 vector? Rn it's just a 0 vector
+        output_mb = np.concatenate((mb[:,1:,:],
+                                    np.zeros((mb.shape[0],1,mb.shape[2]))), axis=1)
+
+        return mb, output_mb
+
+    def get_test_data(self):
+        mb = np.zeros((self.test_size, self.max_seq_len, self.alphabet_len))
+        for i, seq in enumerate(self.test_seqs.values()):
+            mb[i] = self._idx_to_one_hot(seq)
+
         output_mb = np.concatenate((mb[:,1:,:],
                                     np.zeros((mb.shape[0],1,mb.shape[2]))), axis=1)
 
