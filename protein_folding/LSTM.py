@@ -32,8 +32,8 @@ class VariableSequenceLabelling:
         self._num_hidden = num_hidden
         self._num_layers = num_layers
         self.first_cell = True
-        #with tf.variable_scope('prediction'):
-        self.prediction
+        with tf.variable_scope('prediction'):
+            self.prediction
         with tf.variable_scope('calc_error'):
             self.error
         self.optimize
@@ -41,15 +41,15 @@ class VariableSequenceLabelling:
 
     @lazy_property
     def length(self):
-        used = tf.sign(tf.reduce_max(tf.abs(self.data), reduction_indices=2))
-        length = tf.reduce_sum(used, reduction_indices=1)
-        length = tf.cast(length, tf.int32)
-        return length  
+        with tf.variable_scope('calc_lengths'):
+            used = tf.sign(tf.reduce_max(tf.abs(self.data), reduction_indices=2))
+            length = tf.reduce_sum(used, reduction_indices=1)
+            length = tf.cast(length, tf.int32)
+            return length  
         
     @lazy_property
     def prediction(self):
         # Recurrent network.
-
         with tf.variable_scope('dynamic_rnn'):
             with tf.variable_scope('LSTM_cell'):
                 cell = rnn.BasicLSTMCell(num_units=self._num_hidden, reuse=tf.get_variable_scope().reuse)
@@ -65,7 +65,7 @@ class VariableSequenceLabelling:
         num_classes = int(self.target.get_shape()[2])
         weight, bias = self._weight_and_bias(self._num_hidden, num_classes)
         # Flatten to apply same weights to all time steps.
-        with tf.variable_scope('calc_predictions'):
+        with tf.variable_scope('output_to_prediction'):
             output = tf.reshape(output, [-1, self._num_hidden])
             prediction = tf.nn.softmax(tf.matmul(output, weight) + bias)
             prediction = tf.reshape(prediction, [-1, max_length, num_classes])
@@ -136,14 +136,20 @@ def get_dataset():
 """
 
 if __name__ == '__main__':
+    
     align_name = 'FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
+    batch_size = 100
+    num_epochs = 10
+
+
     MSA = MultipleSequenceAlignment('./alignments/'+align_name)
 
     # length of longest sequence
     # output size should be self.alphabet_len (21 including END char)
     length = MSA.max_seq_len
-
     seq_len = MSA.alphabet_len
+    num_batches_per_epoch = MSA.num_seqs / batch_size
+
     # Add +1 for end of seq maybe
     # output_seq_len = MSA.alphabet_len
 
@@ -166,12 +172,12 @@ if __name__ == '__main__':
     writer.add_graph(sess.graph)
 
     sess.run(tf.global_variables_initializer())
-    for epoch in range(10):
+    for epoch in range(num_epochs):
         print "epoch: ", epoch
-        for i in range(100):
-            if i % 10 == 0:
+        for i in range(num_batches_per_epoch):
+            if i % batch_size == 0:
                 print "Batch: ", i
-            batch_data, batch_target = MSA.next_batch(10)
+            batch_data, batch_target = MSA.next_batch(batch_size)
 
             sess.run(model.optimize, {data: batch_data, target: batch_target})
         error = sess.run(model.error, {data: test_data, target: test_target})

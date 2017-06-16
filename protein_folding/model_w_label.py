@@ -2,29 +2,31 @@ import numpy as np
 import random
 
 class MultipleSequenceAlignment:
-    def __init__(self, filename, include_gaps=True):
+    def __init__(self, filename):
         self.filename = filename
-    
+
         self.alphabet = 'ACDEFGHIKLMNPQRSTVWY'
         self.acceptable_seq_alphabet = self.alphabet + '.-'
         self.alphabet_len = len(self.alphabet)
         self.alphabet_map = {s: i for i, s in enumerate(self.alphabet)}
 
         # Dictionary: key = seq_id, value = array of seq chars
-        self.data_seqs = self._read_data()
+        self.seqs = self._read_data()
 
-        self.max_seq_len = max(len(seq) for seq in self.data_seqs.values())
+        self.max_seq_len = max(len(seq) for seq in self.seqs.values())
         self.seq_size = self.max_seq_len*self.alphabet_len
 
+        self.num_seqs = len(self.seqs)
+        self.test_size = self.num_seqs/5
+        self.train_size = self.num_seqs - self.test_size
 
-        # TODO: make this test set getting process into an elegant function
-        self.test_size = len(self.data_seqs)/5
-        test_seq_ids = random.sample(self.data_seqs.keys(), self.test_size)
-        self.test_seqs = dict(zip(test_seq_ids, [self.data_seqs[k] for k in test_seq_ids]))
+        self.test_seq_ids = random.sample(self.seqs.keys(), self.test_size)
+        self.test_data = self.get_test_data()
+        self.reset_train_set()
 
-        for k in test_seq_ids:
-            del self.data_seqs[k]
 
+    def reset_train_set(self):
+        self.train_seq_ids = list(set(self.seqs.keys()) - set(self.test_seq_ids))
 
     def _add_clean_seq(self, curr_id, curr_seq):
         clean_seq = []
@@ -84,12 +86,14 @@ class MultipleSequenceAlignment:
         mb = np.zeros((batch_size, self.max_seq_len, self.alphabet_len))
 
         for i in range(batch_size):  
-            if len(self.data_seqs) > 0:
-                seq_id = random.choice(self.data_seqs.keys())
-                x = self._idx_to_one_hot(self.data_seqs[seq_id])
+            if len(self.train_seq_ids) > 0:
+
+                seq_idx = random.randint(0,len(self.train_seq_ids))
+                x = self._idx_to_one_hot(self.seqs[self.train_seq_ids[seq_idx]])
                 mb[i] = x
-                del self.data_seqs[seq_id] # Pop the seq off so that you don't use it again
+                del self.train_seq_ids[seq_idx] # Pop the seq off so that you don't use it again
             else:
+                self.reset_train_set()
                 break
         
         # Incase you don't get to the end of the batch size, this will trim off the ones
@@ -103,11 +107,11 @@ class MultipleSequenceAlignment:
                                     np.zeros((mb.shape[0],1,mb.shape[2]))), axis=1)
 
         return mb, output_mb
-
+  
     def get_test_data(self):
         mb = np.zeros((self.test_size, self.max_seq_len, self.alphabet_len))
-        for i, seq in enumerate(self.test_seqs.values()):
-            mb[i] = self._idx_to_one_hot(seq)
+        for i, seq_id in enumerate(self.test_seq_ids):
+            mb[i] = self._idx_to_one_hot(self.seqs[seq_id])
 
         output_mb = np.concatenate((mb[:,1:,:],
                                     np.zeros((mb.shape[0],1,mb.shape[2]))), axis=1)
