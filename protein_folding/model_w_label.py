@@ -88,7 +88,7 @@ class MultipleSequenceAlignment:
         for i in range(batch_size):  
             if len(self.train_seq_ids) > 0:
 
-                seq_idx = random.randint(0,len(self.train_seq_ids))
+                seq_idx = random.randint(0,len(self.train_seq_ids)-1)
                 x = self._idx_to_one_hot(self.seqs[self.train_seq_ids[seq_idx]])
                 mb[i] = x
                 del self.train_seq_ids[seq_idx] # Pop the seq off so that you don't use it again

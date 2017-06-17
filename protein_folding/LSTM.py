@@ -8,6 +8,7 @@ from tensorflow.contrib import rnn
 from model_w_label import MultipleSequenceAlignment
 from datetime import datetime
 import os
+import argparse
 
 def lazy_property(function):
     #This is a wrapper to memoize properties
@@ -38,6 +39,8 @@ class VariableSequenceLabelling:
             self.error
         self.optimize
 
+        self.test_error = tf.summary.scalar('test_error',self.error)
+        self.train_error = tf.summary.scalar('train_error',self.error)
 
     @lazy_property
     def length(self):
@@ -124,22 +127,19 @@ class VariableSequenceLabelling:
                         initializer=tf.constant_initializer(0.1))
         return weight, bias
 
-"""
-def get_dataset():
-    # Read dataset and flatten images.
-    dataset = sets.Ocr()
-    dataset = sets.OneHot(dataset.target, depth=2)(dataset, columns=['target'])
-    dataset['data'] = dataset.data.reshape(
-        dataset.data.shape[:-2] + (-1,)).astype(float)
-    train, test = sets.Split(0.66)(dataset)
-    return train, test
-"""
-
 if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--align_name', help='The name of the alignment file for the protein family', \
+                         default='FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m')
+    parser.add_argument('--batch_size', help='Number of sequences per batch', type=int, default=50)
+    parser.add_argument('--num_epochs', help='Number of epochs of training', type=int, default=10)
     
-    align_name = 'FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
-    batch_size = 100
-    num_epochs = 10
+
+    align_name = parser.parse_args().align_name
+    batch_size = parser.parse_args().batch_size
+    num_epochs = parser.parse_args().num_epochs
 
 
     MSA = MultipleSequenceAlignment('./alignments/'+align_name)
@@ -150,16 +150,11 @@ if __name__ == '__main__':
     seq_len = MSA.alphabet_len
     num_batches_per_epoch = MSA.num_seqs / batch_size
 
-    # Add +1 for end of seq maybe
-    # output_seq_len = MSA.alphabet_len
-
-
     data = tf.placeholder(tf.float32, [None, length, seq_len], name='data')
     target = tf.placeholder(tf.float32, [None, length, seq_len], name='target')
     test_data, test_target = MSA.get_test_data()
 
     model = VariableSequenceLabelling(data, target)
-
 
     # TODO: abstract out the act of making this logging system
     log_dir_name = 'LSTM_graph_logs/' + datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + '/'
@@ -177,8 +172,13 @@ if __name__ == '__main__':
         for i in range(num_batches_per_epoch):
             if i % batch_size == 0:
                 print "Batch: ", i
+                test_err_summary = sess.run(model.test_error, {data: test_data, target: test_target})
+                writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
+
             batch_data, batch_target = MSA.next_batch(batch_size)
 
-            sess.run(model.optimize, {data: batch_data, target: batch_target})
+            _, train_err_summary = sess.run([model.optimize, model.train_error], {data: batch_data, target: batch_target})
+            writer.add_summary(train_err_summary, epoch*num_batches_per_epoch + i)
+
         error = sess.run(model.error, {data: test_data, target: test_target})
         print('Epoch {:2d} error {:3.1f}%'.format(epoch + 1, 100 * error))
