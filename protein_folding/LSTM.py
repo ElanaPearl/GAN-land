@@ -35,12 +35,12 @@ class VariableSequenceLabelling:
         self.first_cell = True
         with tf.variable_scope('prediction'):
             self.prediction
-        with tf.variable_scope('calc_error'):
+        with tf.variable_scope('calc_err'):
             self.error
+            self.test_error = tf.summary.scalar('test_error',self.error)
+            self.train_error = tf.summary.scalar('train_error',self.error)
         self.optimize
 
-        self.test_error = tf.summary.scalar('test_error',self.error)
-        self.train_error = tf.summary.scalar('train_error',self.error)
 
     @lazy_property
     def length(self):
@@ -49,13 +49,19 @@ class VariableSequenceLabelling:
             length = tf.reduce_sum(used, reduction_indices=1)
             length = tf.cast(length, tf.int32)
             return length  
-        
+    
+    def lstm_cell(self):
+        return tf.contrib.rnn.BasicLSTMCell(
+            self._num_hidden, state_is_tuple=True,
+            reuse=tf.get_variable_scope().reuse)
+
     @lazy_property
     def prediction(self):
         # Recurrent network.
         with tf.variable_scope('dynamic_rnn'):
             with tf.variable_scope('LSTM_cell'):
-                cell = rnn.BasicLSTMCell(num_units=self._num_hidden, reuse=tf.get_variable_scope().reuse)
+                #cell = self.lstm_cell()
+                cell = tf.contrib.rnn.MultiRNNCell([self.lstm_cell() for _ in range(self._num_layers)])
 
             output, _ = tf.nn.dynamic_rnn(
                 cell=cell,
@@ -97,7 +103,8 @@ class VariableSequenceLabelling:
         # ^ when I include that I get:
         # ValueError: Variable minimize_cost/prediction/dynamic_rnn/rnn/basic_lstm_cell/weights/Adam_optimizer/
         # already exists, disallowed. Did you mean to set reuse=True in VarScope?
-        return optimizer.minimize(self.cost)
+        with tf.name_scope('minimize_cost'):
+            return optimizer.minimize(self.cost)
 
     @property
     def error(self):
