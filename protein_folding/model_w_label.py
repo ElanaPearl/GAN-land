@@ -21,12 +21,17 @@ class MultipleSequenceAlignment:
         self.train_size = self.num_seqs - self.test_size
 
         self.test_seq_ids = random.sample(self.seqs.keys(), self.test_size)
-        self.test_data = self.get_test_data()
         self.reset_train_set()
 
+    def restore_test_set(self, test_seq_ids):
+        print "Restoring test set"
+        self.test_seq_ids = test_seq_ids
+        self.reset_train_set()
 
     def reset_train_set(self):
+        print "Resetting train set"
         self.train_seq_ids = list(set(self.seqs.keys()) - set(self.test_seq_ids))
+
 
     def _add_clean_seq(self, curr_id, curr_seq):
         clean_seq = []
@@ -87,7 +92,6 @@ class MultipleSequenceAlignment:
 
         for i in range(batch_size):  
             if len(self.train_seq_ids) > 0:
-
                 seq_idx = random.randint(0,len(self.train_seq_ids)-1)
                 x = self._idx_to_one_hot(self.seqs[self.train_seq_ids[seq_idx]])
                 mb[i] = x
@@ -108,7 +112,8 @@ class MultipleSequenceAlignment:
 
         return mb, output_mb
   
-    def get_test_data(self):
+    @property
+    def test_data(self):
         mb = np.zeros((self.test_size, self.max_seq_len, self.alphabet_len))
         for i, seq_id in enumerate(self.test_seq_ids):
             mb[i] = self._idx_to_one_hot(self.seqs[seq_id])
