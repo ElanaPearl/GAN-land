@@ -42,7 +42,7 @@ class VariableSequenceLabelling:
             self.train_error = tf.summary.scalar('train_error',self.error)
         self.optimize
 
-    @lazy_property
+    @property
     def length(self):
         with tf.variable_scope('calc_lengths'):
             used = tf.sign(tf.reduce_max(tf.abs(self.data), reduction_indices=2))
@@ -134,6 +134,11 @@ class VariableSequenceLabelling:
                         initializer=tf.constant_initializer(0.1))
         return weight, bias
 
+
+    def generate_seq(self, session):
+        new_seq = [self.START_TOKEN
+        # while the last element isn't end_token
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
@@ -142,7 +147,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', help='Number of sequences per batch', type=int, default=50)
     parser.add_argument('--num_epochs', help='Number of epochs of training', type=int, default=10)
     parser.add_argument('--multilayer', help='Use multiple LSTM layers', type=bool, default=False)
-    parser.add_argument('--restore_path', help='Path to restore model', default='')
+    parser.add_argument('--restore_path', help='Path to restore model, should be of the format '\
+                        '\'LSTM_year-month-date_hour-min-sec\'', default='')
     
     align_name = './alignments/' + parser.parse_args().align_name
     batch_size = parser.parse_args().batch_size
@@ -155,7 +161,7 @@ if __name__ == '__main__':
 
     length = MSA.max_seq_len
     seq_len = MSA.alphabet_len
-    num_batches_per_epoch = MSA.num_seqs / batch_size
+    num_batches_per_epoch = MSA.train_size / batch_size
 
     data = tf.placeholder(tf.float32, [None, length, seq_len], name='data')
     target = tf.placeholder(tf.float32, [None, length, seq_len], name='target')
@@ -213,7 +219,7 @@ if __name__ == '__main__':
         for i in range(pretrained_batches, num_batches_per_epoch):
             if i % batch_size == 0:
                 print "Batch: ", i
-                test_err_summary = sess.run([model.test_error], {data: test_data, target: test_target})
+                test_err_summary = sess.run(model.test_error, {data: test_data, target: test_target})
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
                 saver.save(sess, checkpoint_log_path+'model_{}_{}'.format(epoch,i))
 
