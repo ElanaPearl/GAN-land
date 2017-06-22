@@ -12,21 +12,7 @@ import argparse
 import cPickle as pickle
 import numpy as np
 
-def lazy_property(function):
-    #This is a wrapper to memoize properties
-    #so we don't evaluate until we need them....
-    #read this: https://pypi.python.org/pypi/lazy-property
-    attribute = '_' + function.__name__
 
-    @property
-    @functools.wraps(function)
-    def wrapper(self):
-        if not hasattr(self, attribute):
-            setattr(self, attribute, function(self))
-        return getattr(self, attribute)
-    return wrapper
-
-# TODO: CLEAN THIS
 rev_alphabet_map = {i: s for i, s in enumerate('ACDEFGHIKLMNPQRSTVWY*')}
 
 class VariableSequenceLabelling:
@@ -44,7 +30,7 @@ class VariableSequenceLabelling:
         self._num_layers = num_layers
         self.use_multilayer = use_multilayer
         with tf.variable_scope('prediction'):
-            self.prediction
+            self.prediction = self.get_prediction()
         with tf.variable_scope('calc_err'):
             self.error
             self.test_error = tf.summary.scalar('test_error',self.error)
@@ -65,11 +51,11 @@ class VariableSequenceLabelling:
             reuse=tf.get_variable_scope().reuse)
 
 
-    @lazy_property
+    #@lazy_property
     # WHEN I DON'T DO LAZY PROPERTY I GET THE 
-    #ValueError: Variable calc_err/compute_all_errors/dynamic_rnn/rnn/basic_lstm_cell/weights
+    # ValueError: Variable calc_err/compute_all_errors/dynamic_rnn/rnn/basic_lstm_cell/weights
     # already exists, disallowed. Did you mean to set reuse=True in VarScope?
-    def prediction(self):
+    def get_prediction(self):
         # Recurrent network.
         with tf.variable_scope('dynamic_rnn'):
             with tf.variable_scope('LSTM_cell'):
