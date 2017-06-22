@@ -29,22 +29,27 @@ class VariableSequenceLabelling:
 
         self._num_hidden = num_hidden
         self._num_layers = num_layers
+        self.length = self.get_length()
+
         self.use_multilayer = use_multilayer
+
         with tf.variable_scope('prediction'):
             self.prediction = self.get_prediction()
         with tf.variable_scope('calc_err'):
-            self.error
+            self.error = self.get_error()
             self.test_error = tf.summary.scalar('test_error',self.error)
             self.train_error = tf.summary.scalar('train_error',self.error)
-        self.optimize
+        self.cost = self.get_cost()
+        self.optimize = self.get_optimizer()
+        
 
-    @property
-    def length(self):
+    def get_length(self):
         with tf.variable_scope('calc_lengths'):
             used = tf.sign(tf.reduce_max(tf.abs(self.data), reduction_indices=2))
             length = tf.reduce_sum(used, reduction_indices=1)
             length = tf.cast(length, tf.int32)
             return length  
+    
     
     def lstm_cell(self):
         return tf.contrib.rnn.BasicLSTMCell(
@@ -61,7 +66,7 @@ class VariableSequenceLabelling:
                 else:
                     cell = self.lstm_cell()
 
-            output, _ = rnn.static_rnn(
+            output, _ = tf.nn.dynamic_rnn(
                 cell=cell,
                 inputs=self.data,
                 sequence_length=self.length,
@@ -77,8 +82,7 @@ class VariableSequenceLabelling:
             return prediction
 
 
-    @property
-    def cost(self):
+    def get_cost(self):
         # Compute cross entropy for each frame.
         with tf.variable_scope('compute_cross_ent'):
             cross_entropy = self.target * tf.log(self.prediction)
@@ -91,15 +95,15 @@ class VariableSequenceLabelling:
             cross_entropy /= tf.cast(self.length, tf.float32)
             return tf.reduce_mean(cross_entropy)
 
-    @property
-    def optimize(self):
+
+    def get_optimizer(self):
         learning_rate = 0.0003
         optimizer = tf.train.GradientDescentOptimizer(learning_rate)
         with tf.name_scope('minimize_cost'):
             return optimizer.minimize(self.cost)
 
-    @property
-    def error(self):
+
+    def get_error(self):
         with tf.variable_scope('compute_all_errors'):
             mistakes = tf.not_equal(
                 tf.argmax(self.target, 2), tf.argmax(self.prediction, 2))
