@@ -13,6 +13,7 @@ import cPickle as pickle
 import numpy as np
 
 
+# TODO: incorperate this in somewhere so it isnt just a rando global variable
 rev_alphabet_map = {i: s for i, s in enumerate('ACDEFGHIKLMNPQRSTVWY*')}
 
 class VariableSequenceLabelling:
@@ -51,10 +52,6 @@ class VariableSequenceLabelling:
             reuse=tf.get_variable_scope().reuse)
 
 
-    #@lazy_property
-    # WHEN I DON'T DO LAZY PROPERTY I GET THE 
-    # ValueError: Variable calc_err/compute_all_errors/dynamic_rnn/rnn/basic_lstm_cell/weights
-    # already exists, disallowed. Did you mean to set reuse=True in VarScope?
     def get_prediction(self):
         # Recurrent network.
         with tf.variable_scope('dynamic_rnn'):
@@ -64,7 +61,7 @@ class VariableSequenceLabelling:
                 else:
                     cell = self.lstm_cell()
 
-            output, _ = tf.nn.dynamic_rnn(
+            output, _ = rnn.static_rnn(
                 cell=cell,
                 inputs=self.data,
                 sequence_length=self.length,
@@ -98,10 +95,6 @@ class VariableSequenceLabelling:
     def optimize(self):
         learning_rate = 0.0003
         optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-        # with tf.variable_scope('minimize_cost'):
-        # ^ when I include that I get:
-        # ValueError: Variable minimize_cost/prediction/dynamic_rnn/rnn/basic_lstm_cell/weights/Adam_optimizer/
-        # already exists, disallowed. Did you mean to set reuse=True in VarScope?
         with tf.name_scope('minimize_cost'):
             return optimizer.minimize(self.cost)
 
@@ -140,8 +133,7 @@ class VariableSequenceLabelling:
 
         readable_seq = [] 
 
-        #while not sequence[0,idx,END_TOKEN]:
-        for idx in range(self.max_length): # this way it ensures it ends eventually... 
+        for idx in range(self.max_length):
             logits = sess.run(self.prediction, {data:sequence})
             next_logit = logits[0,idx,:]
             next_pred = np.argmax(next_logit)   
@@ -182,8 +174,7 @@ if __name__ == '__main__':
     print "Constructing model"
     model = VariableSequenceLabelling(data, target, use_multilayer=multilayer, end_token=END_TOKEN)
 
-    # TODO: abstract out the act of making this logging system
-
+    # Restore the old model
     if restore_path:
         log_path = './model_logs/{}/'.format(restore_path)
         with open(log_path + 'test_set_ids.pkl') as f:
