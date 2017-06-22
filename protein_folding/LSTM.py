@@ -10,6 +10,7 @@ from datetime import datetime
 import os
 import argparse
 import cPickle as pickle
+import numpy as np
 
 def lazy_property(function):
     #This is a wrapper to memoize properties
@@ -25,12 +26,20 @@ def lazy_property(function):
         return getattr(self, attribute)
     return wrapper
 
+# TODO: CLEAN THIS
+rev_alphabet_map = {i: s for i, s in enumerate('ACDEFGHIKLMNPQRSTVWY*')}
 
 class VariableSequenceLabelling:
 
-    def __init__(self, data, target, num_hidden=200, num_layers=3, use_multilayer=False):
+    def __init__(self, data, target, num_hidden=200, num_layers=3, use_multilayer=False, end_token=20):
         self.data = data
         self.target = target
+
+        self.max_length = int(self.target.get_shape()[1])
+        self.alphabet_len = int(self.target.get_shape()[2])
+
+        self.END_TOKEN = end_token
+
         self._num_hidden = num_hidden
         self._num_layers = num_layers
         self.use_multilayer = use_multilayer
@@ -55,7 +64,11 @@ class VariableSequenceLabelling:
             self._num_hidden, state_is_tuple=True,
             reuse=tf.get_variable_scope().reuse)
 
+
     @lazy_property
+    # WHEN I DON'T DO LAZY PROPERTY I GET THE 
+    #ValueError: Variable calc_err/compute_all_errors/dynamic_rnn/rnn/basic_lstm_cell/weights
+    # already exists, disallowed. Did you mean to set reuse=True in VarScope?
     def prediction(self):
         # Recurrent network.
         with tf.variable_scope('dynamic_rnn'):
@@ -70,16 +83,14 @@ class VariableSequenceLabelling:
                 inputs=self.data,
                 sequence_length=self.length,
                 dtype=tf.float32
-            ) # You get value error if input is none or an empty list
+            )
         # Softmax layer.
-        max_length = int(self.target.get_shape()[1])
-        num_classes = int(self.target.get_shape()[2])
-        weight, bias = self._weight_and_bias(self._num_hidden, num_classes)
+        weight, bias = self._weight_and_bias(self._num_hidden, self.alphabet_len)
         # Flatten to apply same weights to all time steps.
         with tf.variable_scope('output_to_prediction'):
             output = tf.reshape(output, [-1, self._num_hidden])
             prediction = tf.nn.softmax(tf.matmul(output, weight) + bias)
-            prediction = tf.reshape(prediction, [-1, max_length, num_classes])
+            prediction = tf.reshape(prediction, [-1, self.max_length, self.alphabet_len])
             return prediction
 
 
@@ -136,8 +147,23 @@ class VariableSequenceLabelling:
 
 
     def generate_seq(self, session):
-        new_seq = [self.START_TOKEN
-        # while the last element isn't end_token
+        sequence = np.zeros((1, self.max_length, self.alphabet_len))
+
+        seed = np.random.randint(0, self.alphabet_len-2)
+        sequence[0, 0, seed] = 1
+
+        readable_seq = [] 
+
+        #while not sequence[0,idx,END_TOKEN]:
+        for idx in range(self.max_length): # this way it ensures it ends eventually...
+            logits = sess.run(self.prediction, {data:sequence})
+            next_logit = logits[0,idx,:]
+            next_pred = np.argmax(next_logit)   
+            sequence[0, idx, next_pred] = 1
+            readable_seq.append(rev_alphabet_map[next_pred])
+            
+        return seed, ''.join(readable_seq)
+
 
 if __name__ == '__main__':
 
@@ -159,15 +185,16 @@ if __name__ == '__main__':
     print "Getting multiple sequence alignment"
     MSA = MultipleSequenceAlignment(align_name)
 
-    length = MSA.max_seq_len
-    seq_len = MSA.alphabet_len
+    max_length = MSA.max_seq_len
+    alphabet_len = MSA.alphabet_len
     num_batches_per_epoch = MSA.train_size / batch_size
+    END_TOKEN = MSA.alphabet_map['*']
 
-    data = tf.placeholder(tf.float32, [None, length, seq_len], name='data')
-    target = tf.placeholder(tf.float32, [None, length, seq_len], name='target')
+    data = tf.placeholder(tf.float32, [None, max_length, alphabet_len], name='data')
+    target = tf.placeholder(tf.float32, [None, max_length, alphabet_len], name='target')
 
     print "Constructing model"
-    model = VariableSequenceLabelling(data, target, use_multilayer=multilayer)
+    model = VariableSequenceLabelling(data, target, use_multilayer=multilayer, end_token=END_TOKEN)
 
     # TODO: abstract out the act of making this logging system
 
@@ -200,7 +227,6 @@ if __name__ == '__main__':
     if restore_path:
         print "Restoring checkpoint"
         last_ckpt = tf.train.latest_checkpoint(checkpoint_log_path)
-        #saver = tf.train.import_meta_graph(last_ckpt+'.meta')
         saver = tf.train.Saver()
         saver.restore(sess, last_ckpt)
 
@@ -222,6 +248,8 @@ if __name__ == '__main__':
                 test_err_summary = sess.run(model.test_error, {data: test_data, target: test_target})
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
                 saver.save(sess, checkpoint_log_path+'model_{}_{}'.format(epoch,i))
+
+                print model.generate_seq(sess)
 
             batch_data, batch_target = MSA.next_batch(batch_size)
 
