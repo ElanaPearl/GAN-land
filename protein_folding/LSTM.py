@@ -155,14 +155,14 @@ class VariableSequenceLabelling:
         readable_seq = [] 
 
         #while not sequence[0,idx,END_TOKEN]:
-        for idx in range(self.max_length): # this way it ensures it ends eventually...
+        for idx in range(self.max_length): # this way it ensures it ends eventually... 
             logits = sess.run(self.prediction, {data:sequence})
             next_logit = logits[0,idx,:]
             next_pred = np.argmax(next_logit)   
             sequence[0, idx, next_pred] = 1
             readable_seq.append(rev_alphabet_map[next_pred])
             
-        return seed, ''.join(readable_seq)
+        return rev_alphabet_map[seed] + ''.join(readable_seq)
 
 
 if __name__ == '__main__':
@@ -249,7 +249,7 @@ if __name__ == '__main__':
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
                 saver.save(sess, checkpoint_log_path+'model_{}_{}'.format(epoch,i))
 
-                print model.generate_seq(sess)
+                print "Sample: ", model.generate_seq(sess)
 
             batch_data, batch_target = MSA.next_batch(batch_size)
 
