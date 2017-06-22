@@ -120,7 +120,7 @@ class MultipleSequenceAlignment:
 
         # Trim off the end (after the end token)
         trimmed_seq = seq[:np.sum(seq)]
-        
+
         encoded_seq = np.argmax(seq, 1)
         decoded_seq = map(lambda idx: self.rev_alphabet_map[idx], encoded_seq)
         return ''.join(decoded_seq)
@@ -144,7 +144,6 @@ class MultipleSequenceAlignment:
                 # Choose a random sequence
                 seq_idx = random.randint(0,len(self.train_seq_ids)-1)
                 seq = self.seqs[self.train_seq_ids[seq_idx]]
-                print "THIS IS THE SEQ: ", seq
 
                 mb[i] = self.str_to_one_hot(seq)
                 output_mb[i] = self.str_to_one_hot(self.convert_to_output(seq))
@@ -171,6 +170,6 @@ class MultipleSequenceAlignment:
 
         for i, seq_id in enumerate(self.test_seq_ids):
             mb[i] = self.str_to_one_hot(self.seqs[seq_id])
-            output_mb[i] = self.str_to_one_hot(convert_input_to_output(self.seqs[seq_id]))
+            output_mb[i] = self.str_to_one_hot(self.convert_to_output(self.seqs[seq_id]))
 
         return mb, output_mb
