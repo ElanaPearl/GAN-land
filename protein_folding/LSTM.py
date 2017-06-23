@@ -13,17 +13,16 @@ import cPickle as pickle
 import numpy as np
 
 
-USE_STATIC = True
+USE_STATIC = False
 
 # TODO: incorperate this in somewhere so it isnt just a rando global variable
 rev_alphabet_map = {i: s for i, s in enumerate('ACDEFGHIKLMNPQRSTVWY*')}
 
 class VariableSequenceLabelling:
 
-    def __init__(self, data, target, data_dim, num_hidden=200, num_layers=3, use_multilayer=False, end_token=20):
+    def __init__(self, data, target, num_hidden=200, num_layers=3, use_multilayer=False, end_token=20):
         self.data = data
         self.target = target
-        self.data_dim = data_dim
 
         self.max_length = int(self.target.get_shape()[1])
         self.alphabet_len = int(self.target.get_shape()[2])
@@ -44,8 +43,7 @@ class VariableSequenceLabelling:
             self.train_error = tf.summary.scalar('train_error',self.error)
         self.cost = self.get_cost()
         self.optimize = self.get_optimizer()
-        
-
+    
     def get_length(self):
         with tf.variable_scope('calc_lengths'):
             used = tf.sign(tf.reduce_max(tf.abs(self.data), reduction_indices=2))
@@ -73,7 +71,7 @@ class VariableSequenceLabelling:
             if USE_STATIC:
                 output, _ = rnn.static_rnn(
                     cell=cell,
-                    inputs=tf.unstack(self.data, num=self.data_dim),
+                    inputs=tf.unstack(self.data),
                     sequence_length=self.length,
                     dtype=tf.float32
                 )
@@ -183,6 +181,7 @@ if __name__ == '__main__':
     max_length = MSA.max_seq_len
     alphabet_len = MSA.alphabet_len
     num_batches_per_epoch = MSA.train_size / batch_size
+    num_test_batches = MSA.test_size / batch_size
     END_TOKEN = MSA.alphabet_map['*']
 
     data = tf.placeholder(tf.float32, [None, max_length, alphabet_len], name='data')
@@ -192,7 +191,7 @@ if __name__ == '__main__':
 
 
     print "Constructing model"
-    model = VariableSequenceLabelling(data, target, data_dim, use_multilayer=multilayer, end_token=END_TOKEN)
+    model = VariableSequenceLabelling(data, target, use_multilayer=multilayer, end_token=END_TOKEN)
 
     # Restore the old model
     if restore_path:
@@ -234,28 +233,29 @@ if __name__ == '__main__':
         pretrained_epochs = 0
         pretrained_batches = 0
 
-    test_data, test_target = MSA.test_data
-
+    
     print "Starting training"
     for epoch in range(pretrained_epochs, num_epochs):
         print "Epoch: ", epoch
         for i in range(pretrained_batches, num_batches_per_epoch):
             if i % batch_size == 0:
                 print "Batch: ", i
-                test_err_summary = sess.run(model.test_error, {data: test_data, target: test_target, data_dim: batch_size})
+
+                # GET TEST ERROR
+                test_data, test_target = MSA.next_batch_test(batch_size)
+                test_err_summary = sess.run(model.test_error, {data: test_data, target: test_target})
+
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
                 saver.save(sess, checkpoint_log_path+'model_{}_{}'.format(epoch,i))
 
+                # GENERATE RANDOM SAMPLE
                 print "Sample: ", model.generate_seq(sess)
 
             batch_data, batch_target = MSA.next_batch(batch_size)
 
-            _, train_err_summary = sess.run([model.optimize, model.train_error], {data: batch_data, target: batch_target, data_dim: batch_size})
+            _, train_err_summary = sess.run([model.optimize, model.train_error], {data: batch_data, target: batch_target})
             writer.add_summary(train_err_summary, epoch*num_batches_per_epoch + i)
 
         # The number of batches of a given epoch that we already trained is only relevant 
         # to the first epoch we train after we restore the model
         pretrained_batches = 0
-
-        error = sess.run(model.error, {data: test_data, target: test_target, data_dim: test_data.shape[0]})
-        print('Epoch {:2d} error {:3.1f}%'.format(epoch + 1, 100 * error))
