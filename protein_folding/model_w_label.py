@@ -23,17 +23,24 @@ class MultipleSequenceAlignment:
         self.test_size = self.num_seqs/5
         self.train_size = self.num_seqs - self.test_size
 
-        self.test_seq_ids = random.sample(self.seqs.keys(), self.test_size)
+        self.all_test_seq_ids = random.sample(self.seqs.keys(), self.test_size)
+        self.all_train_seq_ids = list(set(self.seqs.keys()) - set(self.all_test_seq_ids))
         self.reset_train_set()
+        self.reset_test_set()
 
     def restore_test_set(self, test_seq_ids):
         print "Restoring test set"
-        self.test_seq_ids = test_seq_ids
+        self.all_test_seq_ids = test_seq_ids
         self.reset_train_set()
+        self.reset_test_set()
 
     def reset_train_set(self):
         print "Resetting train set"
-        self.train_seq_ids = list(set(self.seqs.keys()) - set(self.test_seq_ids))
+        self.train_seq_ids = list(self.all_train_seq_ids)
+
+    def reset_test_set(self):
+        print "Resetting test set"
+        self.test_seq_ids = list(self.all_test_seq_ids)
 
 
     def _add_sequence(self, curr_id, curr_seq):
@@ -151,11 +158,6 @@ class MultipleSequenceAlignment:
                 # Pop the seq off so that you don't use it again
                 del self.train_seq_ids[seq_idx]
             else:
-                # Incase you don't get to the end of the batch size, this will trim off the ones
-                # you didn't get to (TODO: check if this is necessary)
-                mb = mb[:i]
-                output_mb = output_mb[:i]
-
                 # Set up the training ids for the next epoch
                 self.reset_train_set()
                 break
@@ -163,13 +165,34 @@ class MultipleSequenceAlignment:
         return mb, output_mb
 
 
-    @property
-    def test_data(self):
-        mb = np.zeros((self.test_size, self.max_seq_len, self.alphabet_len))
-        output_mb = np.zeros((self.test_size, self.max_seq_len, self.alphabet_len))
+    def next_batch_test(self, batch_size):
+        """ Generate a minibatch of training data: inputs and outputs.
+        Creates an array of size batch_size x max_seq_length x alphabet_len
+        and fills it with the one-hot encoded versions of batch_size number of
+        random sequences that haven't been used yet in this epoch. For sequences
+        that are less than max_seq_len, they are just padded with zeros. Then the
+        training outputs are just these matrices but without the first letter and
+        with an addition 'end_token' at the end
+        """
 
-        for i, seq_id in enumerate(self.test_seq_ids):
-            mb[i] = self.str_to_one_hot(self.seqs[seq_id])
-            output_mb[i] = self.str_to_one_hot(self.convert_to_output(self.seqs[seq_id]))
+        mb = np.zeros((batch_size, self.max_seq_len, self.alphabet_len))
+        output_mb = np.zeros((batch_size, self.max_seq_len, self.alphabet_len))
+
+        for i in range(batch_size): 
+            # Check if there are any seqs left in this epoch 
+            if len(self.test_seq_ids) > 0:
+                # Choose a random sequence
+                seq_idx = random.randint(0,len(self.test_seq_ids)-1)
+                seq = self.seqs[self.test_seq_ids[seq_idx]]
+
+                mb[i] = self.str_to_one_hot(seq)
+                output_mb[i] = self.str_to_one_hot(self.convert_to_output(seq))
+
+                # Pop the seq off so that you don't use it again
+                del self.test_seq_ids[seq_idx]
+            else:
+                # Set up the training ids for the next epoch
+                self.reset_test_set()
+                break
 
         return mb, output_mb
