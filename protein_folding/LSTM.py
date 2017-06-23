@@ -13,14 +13,17 @@ import cPickle as pickle
 import numpy as np
 
 
+USE_STATIC = True
+
 # TODO: incorperate this in somewhere so it isnt just a rando global variable
 rev_alphabet_map = {i: s for i, s in enumerate('ACDEFGHIKLMNPQRSTVWY*')}
 
 class VariableSequenceLabelling:
 
-    def __init__(self, data, target, num_hidden=200, num_layers=3, use_multilayer=False, end_token=20):
+    def __init__(self, data, target, data_dim, num_hidden=200, num_layers=3, use_multilayer=False, end_token=20):
         self.data = data
         self.target = target
+        self.data_dim = data_dim
 
         self.max_length = int(self.target.get_shape()[1])
         self.alphabet_len = int(self.target.get_shape()[2])
@@ -48,9 +51,9 @@ class VariableSequenceLabelling:
             used = tf.sign(tf.reduce_max(tf.abs(self.data), reduction_indices=2))
             length = tf.reduce_sum(used, reduction_indices=1)
             length = tf.cast(length, tf.int32)
-            return length  
-    
-    
+            return length
+
+
     def lstm_cell(self):
         return tf.contrib.rnn.BasicLSTMCell(
             self._num_hidden, state_is_tuple=True,
@@ -66,12 +69,22 @@ class VariableSequenceLabelling:
                 else:
                     cell = self.lstm_cell()
 
-            output, _ = tf.nn.dynamic_rnn(
-                cell=cell,
-                inputs=self.data,
-                sequence_length=self.length,
-                dtype=tf.float32
-            )
+            
+            if USE_STATIC:
+                output, _ = rnn.static_rnn(
+                    cell=cell,
+                    inputs=tf.unstack(self.data, num=self.data_dim),
+                    sequence_length=self.length,
+                    dtype=tf.float32
+                )
+            else:
+                output, _ = tf.nn.dynamic_rnn(
+                    cell=cell,
+                    inputs=self.data,
+                    sequence_length=self.length,
+                    dtype=tf.float32
+                )
+
         # Softmax layer.
         weight, bias = self._weight_and_bias(self._num_hidden, self.alphabet_len)
         # Flatten to apply same weights to all time steps.
@@ -140,7 +153,7 @@ class VariableSequenceLabelling:
         for idx in range(self.max_length):
             logits = sess.run(self.prediction, {data:sequence})
             next_logit = logits[0,idx,:]
-            next_pred = np.argmax(next_logit)   
+            next_pred = np.argmax(next_logit)
             sequence[0, idx, next_pred] = 1
             readable_seq.append(rev_alphabet_map[next_pred])
             
@@ -175,8 +188,11 @@ if __name__ == '__main__':
     data = tf.placeholder(tf.float32, [None, max_length, alphabet_len], name='data')
     target = tf.placeholder(tf.float32, [None, max_length, alphabet_len], name='target')
 
+    data_dim = batch_size
+
+
     print "Constructing model"
-    model = VariableSequenceLabelling(data, target, use_multilayer=multilayer, end_token=END_TOKEN)
+    model = VariableSequenceLabelling(data, target, data_dim, use_multilayer=multilayer, end_token=END_TOKEN)
 
     # Restore the old model
     if restore_path:
@@ -226,7 +242,7 @@ if __name__ == '__main__':
         for i in range(pretrained_batches, num_batches_per_epoch):
             if i % batch_size == 0:
                 print "Batch: ", i
-                test_err_summary = sess.run(model.test_error, {data: test_data, target: test_target})
+                test_err_summary = sess.run(model.test_error, {data: test_data, target: test_target, data_dim: batch_size})
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
                 saver.save(sess, checkpoint_log_path+'model_{}_{}'.format(epoch,i))
 
@@ -234,12 +250,12 @@ if __name__ == '__main__':
 
             batch_data, batch_target = MSA.next_batch(batch_size)
 
-            _, train_err_summary = sess.run([model.optimize, model.train_error], {data: batch_data, target: batch_target})
+            _, train_err_summary = sess.run([model.optimize, model.train_error], {data: batch_data, target: batch_target, data_dim: batch_size})
             writer.add_summary(train_err_summary, epoch*num_batches_per_epoch + i)
 
         # The number of batches of a given epoch that we already trained is only relevant 
         # to the first epoch we train after we restore the model
         pretrained_batches = 0
 
-        error = sess.run(model.error, {data: test_data, target: test_target})
+        error = sess.run(model.error, {data: test_data, target: test_target, data_dim: test_data.shape[0]})
         print('Epoch {:2d} error {:3.1f}%'.format(epoch + 1, 100 * error))
