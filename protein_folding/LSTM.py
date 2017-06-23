@@ -13,8 +13,6 @@ import cPickle as pickle
 import numpy as np
 
 
-USE_STATIC = False
-
 # TODO: incorperate this in somewhere so it isnt just a rando global variable
 rev_alphabet_map = {i: s for i, s in enumerate('ACDEFGHIKLMNPQRSTVWY*')}
 
@@ -51,7 +49,6 @@ class VariableSequenceLabelling:
             length = tf.cast(length, tf.int32)
             return length
 
-
     def lstm_cell(self):
         return tf.contrib.rnn.BasicLSTMCell(
             self._num_hidden, state_is_tuple=True,
@@ -67,14 +64,6 @@ class VariableSequenceLabelling:
                 else:
                     cell = self.lstm_cell()
 
-            
-            if USE_STATIC:
-                output, _ = rnn.static_rnn(
-                    cell=cell,
-                    inputs=tf.unstack(self.data),
-                    sequence_length=self.length,
-                    dtype=tf.float32
-                )
             else:
                 output, _ = tf.nn.dynamic_rnn(
                     cell=cell,
