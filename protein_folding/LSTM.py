@@ -64,7 +64,6 @@ class VariableSequenceLabelling:
                 else:
                     cell = self.lstm_cell()
 
-            else:
                 output, _ = tf.nn.dynamic_rnn(
                     cell=cell,
                     inputs=self.data,
@@ -98,7 +97,7 @@ class VariableSequenceLabelling:
 
     def get_optimizer(self):
         learning_rate = 0.0003
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+        optimizer = tf.train.AdamOptimizer(learning_rate)
         with tf.name_scope('minimize_cost'):
             return optimizer.minimize(self.cost)
 
