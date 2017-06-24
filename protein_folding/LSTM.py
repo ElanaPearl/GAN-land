@@ -11,6 +11,7 @@ import os
 import argparse
 import cPickle as pickle
 import numpy as np
+from math import ceil
 
 
 # TODO: incorperate this in somewhere so it isnt just a rando global variable
@@ -96,7 +97,7 @@ class VariableSequenceLabelling:
 
 
     def get_optimizer(self):
-        learning_rate = 0.0003
+        learning_rate = 0.002
         optimizer = tf.train.AdamOptimizer(learning_rate)
         with tf.name_scope('minimize_cost'):
             return optimizer.minimize(self.cost)
@@ -168,7 +169,7 @@ if __name__ == '__main__':
 
     max_length = MSA.max_seq_len
     alphabet_len = MSA.alphabet_len
-    num_batches_per_epoch = MSA.train_size / batch_size
+    num_batches_per_epoch = int(ceil(float(MSA.train_size) / batch_size))
     num_test_batches = MSA.test_size / batch_size
     END_TOKEN = MSA.alphabet_map['*']
 
@@ -221,12 +222,15 @@ if __name__ == '__main__':
         pretrained_epochs = 0
         pretrained_batches = 0
 
-    
     print "Starting training"
     for epoch in range(pretrained_epochs, num_epochs):
         print "Epoch: ", epoch
+        #if epoch == 1:
+        #    import pdb; pdb.set_trace()
+        
         for i in range(pretrained_batches, num_batches_per_epoch):
-            if i % batch_size == 0:
+            #if i % batch_size == 0:
+            if i % 100 == 0:
                 print "Batch: ", i
 
                 # GET TEST ERROR
@@ -237,12 +241,22 @@ if __name__ == '__main__':
                 saver.save(sess, checkpoint_log_path+'model_{}_{}'.format(epoch,i))
 
                 # GENERATE RANDOM SAMPLE
-                print "Sample: ", model.generate_seq(sess)
+                #print "Sample: ", model.generate_seq(sess)
+
+            """
+            if i == 10 or i == 1800:
+                variables_names =[v.name for v in tf.trainable_variables()]
+                values = sess.run(variables_names)
+  
+                with open('trained_vars_{}_{}.pkl'.format(epoch, i),'w') as f:
+                    pickle.dump(dict(zip(variables_names, values)) ,f)
+            """
 
             batch_data, batch_target = MSA.next_batch(batch_size)
 
             _, train_err_summary = sess.run([model.optimize, model.train_error], {data: batch_data, target: batch_target})
             writer.add_summary(train_err_summary, epoch*num_batches_per_epoch + i)
+
 
         # The number of batches of a given epoch that we already trained is only relevant 
         # to the first epoch we train after we restore the model
