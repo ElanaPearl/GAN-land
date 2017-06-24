@@ -1,0 +1,6 @@
+*.pyc
+*/alignments
+*/model_logs/
+*/graph_logs/
+*/checkpoint_logs/
+
