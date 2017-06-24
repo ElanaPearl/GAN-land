@@ -158,6 +158,10 @@ class MultipleSequenceAlignment:
                 # Pop the seq off so that you don't use it again
                 del self.train_seq_ids[seq_idx]
             else:
+
+                # This is necessary
+                mb = mb[:i]
+                output_mb = output_mb[:i]
                 # Set up the training ids for the next epoch
                 self.reset_train_set()
                 break
@@ -191,6 +195,10 @@ class MultipleSequenceAlignment:
                 # Pop the seq off so that you don't use it again
                 del self.test_seq_ids[seq_idx]
             else:
+
+                mb = mb[:i]
+                output_mb = output_mb[:i]
+
                 # Set up the training ids for the next epoch
                 self.reset_test_set()
                 break
