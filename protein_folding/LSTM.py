@@ -241,7 +241,7 @@ if __name__ == '__main__':
                 saver.save(sess, checkpoint_log_path+'model_{}_{}'.format(epoch,i))
 
                 # GENERATE RANDOM SAMPLE
-                #print "Sample: ", model.generate_seq(sess)
+                print "Sample: ", model.generate_seq(sess)
 
             """
             if i == 10 or i == 1800:
