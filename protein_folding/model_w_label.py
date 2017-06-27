@@ -2,15 +2,17 @@ import numpy as np
 import tensorflow as tf
 import random
 import cPickle as pickle
+import os
 
 TEST_ALIGN_ID = 'alignments/FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
+END_TOKEN = '*'
+USE_SMALL = True # aka only use first 1000 proteins
 
 class MultipleSequenceAlignment:
-    def __init__(self, filename, weight_path='SEQ_WEIGHTS.pkl', test_ids_path=None):
+    def __init__(self, filename, weight_path='SEQ_WEIGHTS_SMALL.pkl', test_ids_path=None):
         self.filename = filename
 
         self.alphabet = 'ACDEFGHIKLMNPQRSTVWY*'
-        self.end_token = '*'
         
         self.acceptable_seq_alphabet = self.alphabet + '.-'
         self.alphabet_len = len(self.alphabet)
@@ -26,13 +28,13 @@ class MultipleSequenceAlignment:
         test_size = self.num_seqs/5
 
         # GET WEIGHTS FOR SEQUENCES
-        if weight_path:
+        if os.path.exists(weight_path) and False:
             with open(weight_path) as f:
                 self.seq_weights = pickle.load(f)
         else:
             self.seq_weights = self.calc_seq_weights()
-            with open('SEQ_WEIGHTS.pkl','w') as f:
-                pickle.dump(self.seq_weights, f)
+            #with open(weight_path,'w') as f:
+            #    pickle.dump(self.seq_weights, f)
    
         # SELECT TEST AND TRAIN SET
         if test_ids_path:
@@ -50,22 +52,27 @@ class MultipleSequenceAlignment:
         self.unused_test_idx = dict(zip(self.test_idx, self.seq_weights[self.test_idx]))
         self.unused_train_idx = dict(zip(self.train_idx, self.seq_weights[self.train_idx]))
 
-    
-    def calc_seq_weights(self, encoded_seqs):
+# DOT1 > DOT2 is always GREATER THAN .8   
+    def calc_seq_weights(self):
         # Create encoded version of all of the data
         encoded_seqs = self.encode_all()
+        cutoff = 0.2
 
-        X_flat = tf.placeholder(tf.float32, [self.num_seqs, self.max_seq_len*self.alphabet_len], name="X_flat")
-        
-        cutoff = 0.2 # TODO, move this varrrr
+        X = tf.placeholder(tf.float32, [self.num_seqs, self.max_seq_len, self.alphabet_len], name="X_flat")
+        X_flat = tf.reshape(X, [self.num_seqs, self.max_seq_len *self.alphabet_len])
+        X_norm_factor = tf.reduce_sum(X_flat, axis=1, keep_dims=True)
 
-        DOT1 = tf.map_fn(lambda x: tf.reduce_sum(tf.multiply(X_flat, x)), X_flat)
-        DOT2 = tf.map_fn(lambda x: tf.reduce_sum(tf.multiply(x, tf.transpose(x))), X_flat)
-        weights = tf.map_fn(lambda x: 1.0 / tf.reduce_sum(tf.cast(DOT1/DOT2 > 1 - cutoff, tf.float32)), X_flat)
+
+        sq_X = tf.matmul(X_flat, X_flat, transpose_b=True)
+        norm_X = sq_X / X_norm_factor
+
+        weights = 1.0 / tf.reduce_sum(tf.cast(norm_X > 1 - cutoff, tf.float32), axis=1)
+
         with tf.Session() as sess:
-            return sess.run(weights, feed_dict = {X_flat: encoded_seqs.reshape((self.num_seqs, self.max_seq_len*self.alphabet_len))})
+            return sess.run(weights, feed_dict={X: encoded_seqs})
 
    
+    # TODO: combine encode_all and str_to_one_hot into one fxn bc they're basically the same
     def encode_all(self):
         encoded_seqs = np.zeros((self.num_seqs, self.max_seq_len, self.alphabet_len))
 
@@ -112,7 +119,7 @@ class MultipleSequenceAlignment:
         random sequences that haven't been used yet in this epoch. For sequences
         that are less than max_seq_len, they are just padded with zeros. Then the
         training outputs are just these matrices but without the first letter and
-        with an addition 'end_token' at the end
+        with an additional end token at the end
         """
 
         mb = np.zeros((batch_size, self.max_seq_len, self.alphabet_len))
@@ -133,7 +140,7 @@ class MultipleSequenceAlignment:
 
                 seq = self.seqs[self.seqs.keys()[idx]]
                 mb[i] = self.str_to_one_hot(seq)
-                output_mb[i] = self.str_to_one_hot(seq[1:] + self.end_token)
+                output_mb[i] = self.str_to_one_hot(seq[1:] + END_TOKEN)
 
                 # Pop the seq off so that you don't use it again
                 del unused_seq_info[idx]
@@ -188,6 +195,7 @@ class MultipleSequenceAlignment:
         """
 
         self.seqs = {}
+        i = 0
 
         with open(self.filename)as f:
             current_sequence = ""
@@ -199,6 +207,12 @@ class MultipleSequenceAlignment:
                 if line.startswith(">"):
                     if current_id is not None:
                         self._add_sequence(current_id, current_sequence)
+
+                        i += 1
+                        # THIS IS JUST A TEST TO KEEP THINGS SMALL
+                        if i == 1000 and USE_SMALL:
+                            return self.seqs
+                        
 
                     current_id = line.rstrip()[1:]
                     current_sequence = ""
