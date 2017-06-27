@@ -6,10 +6,9 @@ import os
 
 TEST_ALIGN_ID = 'alignments/FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
 END_TOKEN = '*'
-USE_SMALL = True # aka only use first 1000 proteins
 
 class MultipleSequenceAlignment:
-    def __init__(self, filename, weight_path='SEQ_WEIGHTS_SMALL.pkl', test_ids_path=None):
+    def __init__(self, filename, weight_path='SEQ_WEIGHTS.pkl', test_ids_path=None):
         self.filename = filename
 
         self.alphabet = 'ACDEFGHIKLMNPQRSTVWY*'
@@ -28,13 +27,13 @@ class MultipleSequenceAlignment:
         test_size = self.num_seqs/5
 
         # GET WEIGHTS FOR SEQUENCES
-        if os.path.exists(weight_path) and False:
+        if os.path.exists(weight_path):
             with open(weight_path) as f:
                 self.seq_weights = pickle.load(f)
         else:
             self.seq_weights = self.calc_seq_weights()
-            #with open(weight_path,'w') as f:
-            #    pickle.dump(self.seq_weights, f)
+            with open(weight_path,'w') as f:
+                pickle.dump(self.seq_weights, f)
    
         # SELECT TEST AND TRAIN SET
         if test_ids_path:
@@ -52,7 +51,7 @@ class MultipleSequenceAlignment:
         self.unused_test_idx = dict(zip(self.test_idx, self.seq_weights[self.test_idx]))
         self.unused_train_idx = dict(zip(self.train_idx, self.seq_weights[self.train_idx]))
 
-# DOT1 > DOT2 is always GREATER THAN .8   
+
     def calc_seq_weights(self):
         # Create encoded version of all of the data
         encoded_seqs = self.encode_all()
@@ -195,7 +194,6 @@ class MultipleSequenceAlignment:
         """
 
         self.seqs = {}
-        i = 0
 
         with open(self.filename)as f:
             current_sequence = ""
@@ -207,12 +205,6 @@ class MultipleSequenceAlignment:
                 if line.startswith(">"):
                     if current_id is not None:
                         self._add_sequence(current_id, current_sequence)
-
-                        i += 1
-                        # THIS IS JUST A TEST TO KEEP THINGS SMALL
-                        if i == 1000 and USE_SMALL:
-                            return self.seqs
-                        
 
                     current_id = line.rstrip()[1:]
                     current_sequence = ""
