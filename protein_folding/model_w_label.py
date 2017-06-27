@@ -6,9 +6,11 @@ import os
 
 TEST_ALIGN_ID = 'alignments/FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
 END_TOKEN = '*'
+USE_SMALL = True
+MED_SIZE = 10000
 
 class MultipleSequenceAlignment:
-    def __init__(self, filename, weight_path='SEQ_WEIGHTS.pkl', test_ids_path=None):
+    def __init__(self, filename, weight_path='SEQ_WEIGHTS_MED.pkl', test_ids_path=None):
         self.filename = filename
 
         self.alphabet = 'ACDEFGHIKLMNPQRSTVWY*'
@@ -24,7 +26,9 @@ class MultipleSequenceAlignment:
         # GET METADATA ABOUT SEQUENCES
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
         self.num_seqs = len(self.seqs)
-        test_size = self.num_seqs/5
+        self.test_size = self.num_seqs/5
+        self.train_size = self.num_seqs - self.test_size
+
 
         # GET WEIGHTS FOR SEQUENCES
         if os.path.exists(weight_path):
@@ -34,16 +38,19 @@ class MultipleSequenceAlignment:
             self.seq_weights = self.calc_seq_weights()
             with open(weight_path,'w') as f:
                 pickle.dump(self.seq_weights, f)
-   
+
         # SELECT TEST AND TRAIN SET
-        if test_ids_path:
+        if os.path.exists(test_ids_path):
             with open(test_ids_path) as f:
                 self.test_idx = pickle.load(f)
         else:
             self.test_idx = np.random.choice(np.arange(self.num_seqs), \
-                                         size=test_size, \
+                                         size=self.test_size, \
                                          replace=False, \
                                          p=self.seq_weights/sum(self.seq_weights))
+            with open(test_ids_path, 'w') as f:
+                pickle.dump(self.test_idx, f)
+
         self.train_idx = list(set(np.arange(self.num_seqs)) - set(self.test_idx))
 
 
@@ -59,13 +66,20 @@ class MultipleSequenceAlignment:
 
         X = tf.placeholder(tf.float32, [self.num_seqs, self.max_seq_len, self.alphabet_len], name="X_flat")
         X_flat = tf.reshape(X, [self.num_seqs, self.max_seq_len *self.alphabet_len])
-        X_norm_factor = tf.reduce_sum(X_flat, axis=1, keep_dims=True)
 
 
-        sq_X = tf.matmul(X_flat, X_flat, transpose_b=True)
-        norm_X = sq_X / X_norm_factor
 
-        weights = 1.0 / tf.reduce_sum(tf.cast(norm_X > 1 - cutoff, tf.float32), axis=1)
+        weights = tf.map_fn(lambda x: 1.0/ tf.reduce_sum(tf.cast(tf.reduce_sum(tf.multiply(X_flat, x), axis=1) / tf.reduce_sum(x) > 1 - cutoff, tf.float32)), X_flat)
+
+
+        #X_norm_factor = tf.reduce_sum(X_flat, axis=1, keep_dims=True)
+
+
+
+        #sq_X = tf.matmul(X_flat, X_flat, transpose_b=True)
+        #norm_X = sq_X / X_norm_factor
+
+        #weights = 1.0 / tf.reduce_sum(tf.cast(norm_X > 1 - cutoff, tf.float32), axis=1)
 
         with tf.Session() as sess:
             return sess.run(weights, feed_dict={X: encoded_seqs})
@@ -194,6 +208,7 @@ class MultipleSequenceAlignment:
         """
 
         self.seqs = {}
+        i = 0
 
         with open(self.filename)as f:
             current_sequence = ""
@@ -205,6 +220,12 @@ class MultipleSequenceAlignment:
                 if line.startswith(">"):
                     if current_id is not None:
                         self._add_sequence(current_id, current_sequence)
+
+                        
+                        if USE_SMALL and i == MED_SIZE:
+                            return self.seqs
+                        i += 1
+                        
 
                     current_id = line.rstrip()[1:]
                     current_sequence = ""
