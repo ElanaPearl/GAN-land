@@ -132,19 +132,27 @@ class VariableSequenceLabelling:
     def generate_seq(self, session):
         sequence = np.zeros((1, self.max_length, self.alphabet_len))
 
+        # TODO: calculate distribution over first letters and use that as sample seed
         seed = np.random.randint(0, self.alphabet_len-2)
         sequence[0, 0, seed] = 1
 
-        readable_seq = [] 
+        readable_seq = [rev_alphabet_map[seed]]
 
-        for idx in range(self.max_length):
+        for idx in range(1, self.max_length):
             logits = sess.run(self.prediction, {data:sequence})
             next_logit = logits[0,idx,:]
-            next_pred = np.argmax(next_logit)
+            next_pred = np.random.choice(np.arange(self.alphabet_len), p=next_logit)
             sequence[0, idx, next_pred] = 1
             readable_seq.append(rev_alphabet_map[next_pred])
-            
-        return rev_alphabet_map[seed] + ''.join(readable_seq)
+
+        # FILTER OUT ONLY THE LETTERS BEFORE THE *
+        trimmed_seq = []
+        for x in readable_seq:
+            if x == '*':
+                break
+            trimmed_seq.append(x)
+
+        return ''.join(trimmed_seq)
 
 
 if __name__ == '__main__':
@@ -152,7 +160,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--align_name', help='The name of the alignment file for the protein family', \
                          default='FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m')
-    parser.add_argument('--batch_size', help='Number of sequences per batch', type=int, default=50)
+    parser.add_argument('--batch_size', help='Number of sequences per batch', type=int, default=100)
     parser.add_argument('--num_epochs', help='Number of epochs of training', type=int, default=10)
     parser.add_argument('--multilayer', help='Use multiple LSTM layers', type=bool, default=False)
     parser.add_argument('--restore_path', help='Path to restore model, should be of the format '\
@@ -164,8 +172,26 @@ if __name__ == '__main__':
     multilayer = parser.parse_args().multilayer
     restore_path = parser.parse_args().restore_path
 
+    # Restore the old model
+    if restore_path:
+        log_path = './model_logs/{}/'.format(restore_path)
+    else:
+        log_path = './model_logs/LSTM_{}/'.format(datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+
+    graph_log_path = log_path + 'graphs/'
+    checkpoint_log_path = log_path + 'checkpoints/'
+    test_ids_path = log_path + 'test_ids.pkl'
+    # TODO: ADD A WEIGHT PATH HERE TOO
+
+    if not os.path.exists(graph_log_path):
+        os.makedirs(graph_log_path)
+
+    if not os.path.exists(checkpoint_log_path):
+        os.makedirs(checkpoint_log_path)
+
+
     print "Getting multiple sequence alignment"
-    MSA = MultipleSequenceAlignment(align_name)
+    MSA = MultipleSequenceAlignment(align_name, test_ids_path=test_ids_path)
 
     max_length = MSA.max_seq_len
     alphabet_len = MSA.alphabet_len
@@ -176,38 +202,17 @@ if __name__ == '__main__':
     data = tf.placeholder(tf.float32, [None, max_length, alphabet_len], name='data')
     target = tf.placeholder(tf.float32, [None, max_length, alphabet_len], name='target')
 
-    data_dim = batch_size
-
 
     print "Constructing model"
     model = VariableSequenceLabelling(data, target, use_multilayer=multilayer, end_token=END_TOKEN)
 
-    # Restore the old model
-    if restore_path:
-        log_path = './model_logs/{}/'.format(restore_path)
-        with open(log_path + 'test_set_ids.pkl') as f:
-            MSA.restore_test_set(pickle.load(f))
-    else:
-        log_path = './model_logs/LSTM_{}/'.format(datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
-        os.makedirs(log_path)
-        with open(log_path + 'test_set_ids.pkl', 'w') as f:
-            pickle.dump(MSA.test_seq_ids, f)
-
-    graph_log_path = log_path + '/graphs/'
-    checkpoint_log_path = log_path + '/checkpoints/'
-    
-    if not os.path.exists(graph_log_path):
-        os.makedirs(graph_log_path)
-
-    if not os.path.exists(checkpoint_log_path):
-        os.makedirs(checkpoint_log_path)
 
     writer = tf.summary.FileWriter(graph_log_path)
     sess = tf.Session()
     writer.add_graph(sess.graph)
 
     sess.run(tf.global_variables_initializer())
-    
+
 
     if restore_path:
         print "Restoring checkpoint"
@@ -222,11 +227,10 @@ if __name__ == '__main__':
         pretrained_epochs = 0
         pretrained_batches = 0
 
+
     print "Starting training"
     for epoch in range(pretrained_epochs, num_epochs):
         print "Epoch: ", epoch
-        #if epoch == 1:
-        #    import pdb; pdb.set_trace()
         
         for i in range(pretrained_batches, num_batches_per_epoch):
             #if i % batch_size == 0:
@@ -234,7 +238,7 @@ if __name__ == '__main__':
                 print "Batch: ", i
 
                 # GET TEST ERROR
-                test_data, test_target = MSA.next_batch_test(batch_size)
+                test_data, test_target = MSA.next_batch(batch_size, test=True)
                 test_err_summary = sess.run(model.test_error, {data: test_data, target: test_target})
 
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
