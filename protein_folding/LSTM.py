@@ -19,7 +19,7 @@ rev_alphabet_map = {i: s for i, s in enumerate('ACDEFGHIKLMNPQRSTVWY*')}
 
 class VariableSequenceLabelling:
 
-    def __init__(self, data, target, num_hidden=200, num_layers=3, use_multilayer=False, end_token=20):
+    def __init__(self, data, target, num_hidden=200, num_layers=3, use_multilayer=True, end_token=20):
         self.data = data
         self.target = target
 
@@ -97,7 +97,7 @@ class VariableSequenceLabelling:
 
 
     def get_optimizer(self):
-        learning_rate = 0.002
+        learning_rate = 0.001
         optimizer = tf.train.AdamOptimizer(learning_rate)
         with tf.name_scope('minimize_cost'):
             return optimizer.minimize(self.cost)
@@ -152,7 +152,7 @@ class VariableSequenceLabelling:
                 break
             trimmed_seq.append(x)
 
-        return ''.join(trimmed_seq)
+        return tf.summary.text(''.join(trimmed_seq))
 
 
 if __name__ == '__main__':
@@ -160,13 +160,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--align_name', help='The name of the alignment file for the protein family', \
                          default='FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m')
-    parser.add_argument('--batch_size', help='Number of sequences per batch', type=int, default=100)
+    parser.add_argument('--batch_size', help='Number of sequences per batch', type=int, default=200)
     parser.add_argument('--num_epochs', help='Number of epochs of training', type=int, default=10)
     parser.add_argument('--multilayer', help='Use multiple LSTM layers', type=bool, default=False)
     parser.add_argument('--restore_path', help='Path to restore model, should be of the format '\
                         '\'LSTM_year-month-date_hour-min-sec\'', default='')
     
-    align_name = './alignments/' + parser.parse_args().align_name
+    align_name = os.path.join('./alignments/', parser.parse_args().align_name)
     batch_size = parser.parse_args().batch_size
     num_epochs = parser.parse_args().num_epochs
     multilayer = parser.parse_args().multilayer
@@ -174,13 +174,13 @@ if __name__ == '__main__':
 
     # Restore the old model
     if restore_path:
-        log_path = './model_logs/{}/'.format(restore_path)
+        log_path = os.path.join('./model_logs', restore_path)
     else:
-        log_path = './model_logs/LSTM_{}/'.format(datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+        log_path = os.path.join('./model_logs','LSTM_{}/'.format(datetime.now().strftime("%Y-%m-%d_%H-%M-%S")))
 
-    graph_log_path = log_path + 'graphs/'
-    checkpoint_log_path = log_path + 'checkpoints/'
-    test_ids_path = log_path + 'test_ids.pkl'
+    graph_log_path = os.path.join(log_path, 'graphs')
+    checkpoint_log_path = os.path.join(log_path, 'checkpoints')
+    test_ids_path = os.path.join(log_path, 'test_ids.pkl')
     # TODO: ADD A WEIGHT PATH HERE TOO
 
     if not os.path.exists(graph_log_path):
@@ -242,11 +242,13 @@ if __name__ == '__main__':
                 test_err_summary = sess.run(model.test_error, {data: test_data, target: test_target})
 
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
-                saver.save(sess, checkpoint_log_path+'model_{}_{}'.format(epoch,i))
+                saver.save(sess, os.path.join(checkpoint_log_path,'model_{}_{}'.format(epoch,i)))
 
                 # GENERATE RANDOM SAMPLE
-                print "Sample: ", model.generate_seq(sess)
-
+                print "Sample: ", 
+                sample_summary = sess.run(model.generate_seq(sess))
+                writer.add_summary(train_err_summary, epoch*num_batches_per_epoch + i)
+                
             """
             if i == 10 or i == 1800:
                 variables_names =[v.name for v in tf.trainable_variables()]
@@ -260,6 +262,9 @@ if __name__ == '__main__':
 
             _, train_err_summary = sess.run([model.optimize, model.train_error], {data: batch_data, target: batch_target})
             writer.add_summary(train_err_summary, epoch*num_batches_per_epoch + i)
+
+        test_data, test_target = MSA.next_batch(batch_size, test=True)
+        print "Error: ", sess.run(model.error, {data: test_data, target: test_target})
 
 
         # The number of batches of a given epoch that we already trained is only relevant 
