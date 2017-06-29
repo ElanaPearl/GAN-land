@@ -44,8 +44,6 @@ class VariableSequenceLabelling:
         self.cost = self.get_cost()
         self.optimize = self.get_optimizer()
 
-        #self.seq_placeholder = tf.placeholder(tf.string)
-        #self.sample_seq_summary = tf.summary.text('sample_seq', self.seq_placeholder)
     
     def get_length(self):
         with tf.variable_scope('calc_lengths'):
@@ -53,6 +51,7 @@ class VariableSequenceLabelling:
             length = tf.reduce_sum(used, reduction_indices=1)
             length = tf.cast(length, tf.int32)
             return length
+
 
     def lstm_cell(self):
         return tf.contrib.rnn.BasicLSTMCell(
@@ -150,13 +149,15 @@ class VariableSequenceLabelling:
             readable_seq.append(rev_alphabet_map[next_pred])
 
         # FILTER OUT ONLY THE LETTERS BEFORE THE *
+        """"
         trimmed_seq = []
         for x in readable_seq:
             if x == '*':
                 break
             trimmed_seq.append(x)
+        """
 
-        return ''.join(trimmed_seq)
+        return ''.join(readable_seq)
 
 
 if __name__ == '__main__':
@@ -246,20 +247,28 @@ if __name__ == '__main__':
         logging.info("Epoch: {}".format(epoch))
         
         for i in range(pretrained_batches, num_batches_per_epoch):
-            #if i % batch_size == 0:
             if i % batch_size == 0:
-                logging.info("Batch: {}".format(i))
+                
+                # logging.info("Batch: {}".format(i))
 
                 # GET TEST ERROR
                 test_data, test_target = MSA.next_batch(batch_size, test=True)
-                test_err_summary = sess.run(model.test_error, {data: test_data, target: test_target})
+                test_err_summary, test_err, test_pred = sess.run([model.test_error, model.error, model.prediction], {data: test_data, target: test_target})
+
+                logging.info("Batch: {}, Error: {}".format(i, test_err))
 
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
                 saver.save(sess, os.path.join(checkpoint_log_path,'model_{}_{}'.format(epoch,i)))
 
-                # GENERATE RANDOM SAMPLE
+                logging.info("target: {}".format(MSA.one_hot_to_str(test_target[0])))
+                logging.info("pred:   {}".format(MSA.one_hot_to_str(test_pred[0])))
+
+                                # GENERATE RANDOM SAMPLE
                 seq_sample = model.generate_seq(sess)
-                logging.info("Sample: {}".format(seq_sample))
+                logging.info("gen:    {}".format(seq_sample))
+                
+
+
                 #sample_summary = sess.run(model.sample_seq_summary, {seq_placeholder: seq_sample})
                 #writer.add_summary(sample_summary, epoch*num_batches_per_epoch + i)
 
@@ -267,7 +276,7 @@ if __name__ == '__main__':
             if i == 10 or i == 1800:
                 variables_names =[v.name for v in tf.trainable_variables()]
                 values = sess.run(variables_names)
-  
+
                 with open('trained_vars_{}_{}.pkl'.format(epoch, i),'w') as f:
                     pickle.dump(dict(zip(variables_names, values)) ,f)
             """
