@@ -10,7 +10,7 @@ USE_SMALL = False
 MED_SIZE = 10000
 
 class MultipleSequenceAlignment:
-    def __init__(self, filename, weight_path='SEQ_WEIGHTS.pkl', test_ids_path='test_ids.pkl'):
+    def __init__(self, filename, weight_path='SEQ_WEIGHTS.pkl', test_ids_path='test_ids.pkl', seed_weight_path='seed_weights.pkl'):
         self.filename = filename
 
         self.alphabet = 'ACDEFGHIKLMNPQRSTVWY*'
@@ -38,6 +38,23 @@ class MultipleSequenceAlignment:
             self.seq_weights = self.calc_seq_weights()
             with open(weight_path,'w') as f:
                 pickle.dump(self.seq_weights, f)
+
+
+        if os.path.exists(seed_weight_path):
+            with open(seed_weight_path) as f:
+                self.seed_weights = pickle.load(f)
+        else:
+            first_vals = dict(zip(list(self.alphabet),np.zeros(self.alphabet_len)))
+            for i, v in enumerate(self.seqs.values()):
+                first_vals[v[0]] += self.seq_weights[i]
+            
+            norm_const = sum(first_vals.values())
+            first_vals = {k: v / norm_const for k, v in first_vals.iteritems()}
+            self.seed_weights = [first_vals[k] for k in self.alphabet]
+
+            with open(seed_weight_path,'w') as f:
+                pickle.dump(seed_weights, f)
+
 
         # SELECT TEST AND TRAIN SET
         if os.path.exists(test_ids_path):

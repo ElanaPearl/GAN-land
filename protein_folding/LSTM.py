@@ -20,9 +20,11 @@ rev_alphabet_map = {i: s for i, s in enumerate('ACDEFGHIKLMNPQRSTVWY*')}
 
 class VariableSequenceLabelling:
 
-    def __init__(self, data, target, num_hidden=200, num_layers=3, use_multilayer=True, end_token=20):
+    def __init__(self, data, target, num_hidden=200, num_layers=3, use_multilayer=True, end_token=20, seed_weights=None):
         self.data = data
         self.target = target
+
+        self.seed_weights = seed_weights
 
         self.max_length = int(self.target.get_shape()[1])
         self.alphabet_len = int(self.target.get_shape()[2])
@@ -135,8 +137,12 @@ class VariableSequenceLabelling:
     def generate_seq(self, session):
         sequence = np.zeros((1, self.max_length, self.alphabet_len))
 
-        # TODO: calculate distribution over first letters and use that as sample seed
-        seed = np.random.randint(0, self.alphabet_len-2)
+        # TODO: change this so that it calculates them
+        if self.seed_weights:
+            seed = np.random.choice(np.arange(len(self.seed_weights)), p = self.seed_weights)
+        else:
+            seed = np.random.randint(0, self.alphabet_len-2)
+        
         sequence[0, 0, seed] = 1
 
         readable_seq = [rev_alphabet_map[seed]]
@@ -218,7 +224,7 @@ if __name__ == '__main__':
 
 
     print "Constructing model"
-    model = VariableSequenceLabelling(data, target, use_multilayer=multilayer, end_token=END_TOKEN)
+    model = VariableSequenceLabelling(data, target, use_multilayer=multilayer, end_token=END_TOKEN, seed_weights=MSA.seed_weights)
 
 
     writer = tf.summary.FileWriter(graph_log_path)
@@ -248,9 +254,7 @@ if __name__ == '__main__':
         
         for i in range(pretrained_batches, num_batches_per_epoch):
             if i % batch_size == 0:
-                
-                # logging.info("Batch: {}".format(i))
-
+            
                 # GET TEST ERROR
                 test_data, test_target = MSA.next_batch(batch_size, test=True)
                 test_err_summary, test_err, test_pred = sess.run([model.test_error, model.error, model.prediction], {data: test_data, target: test_target})
@@ -260,14 +264,16 @@ if __name__ == '__main__':
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
                 saver.save(sess, os.path.join(checkpoint_log_path,'model_{}_{}'.format(epoch,i)))
 
+                if np.sum(test_target[0]) < len(test_target[0]):
+                    import pdb; pdb.set_trace()
+
                 logging.info("target: {}".format(MSA.one_hot_to_str(test_target[0])))
                 logging.info("pred:   {}".format(MSA.one_hot_to_str(test_pred[0])))
 
-                                # GENERATE RANDOM SAMPLE
+                # GENERATE RANDOM SAMPLE
                 seq_sample = model.generate_seq(sess)
                 logging.info("gen:    {}".format(seq_sample))
                 
-
 
                 #sample_summary = sess.run(model.sample_seq_summary, {seq_placeholder: seq_sample})
                 #writer.add_summary(sample_summary, epoch*num_batches_per_epoch + i)
