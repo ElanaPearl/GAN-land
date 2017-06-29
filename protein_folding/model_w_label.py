@@ -6,11 +6,11 @@ import os
 
 TEST_ALIGN_ID = 'alignments/FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
 END_TOKEN = '*'
-USE_SMALL = True
+USE_SMALL = False
 MED_SIZE = 10000
 
 class MultipleSequenceAlignment:
-    def __init__(self, filename, weight_path='SEQ_WEIGHTS_MED.pkl', test_ids_path=None):
+    def __init__(self, filename, weight_path='SEQ_WEIGHTS.pkl', test_ids_path='test_ids.pkl'):
         self.filename = filename
 
         self.alphabet = 'ACDEFGHIKLMNPQRSTVWY*'
@@ -120,7 +120,7 @@ class MultipleSequenceAlignment:
         # Trim off the end (after the end token)
         trimmed_seq = seq[:np.sum(seq)]
 
-        encoded_seq = np.argmax(seq, 1)
+        encoded_seq = np.argmax(trimmed_seq, 1)
         decoded_seq = map(lambda idx: self.rev_alphabet_map[idx], encoded_seq)
         return ''.join(decoded_seq)
 
