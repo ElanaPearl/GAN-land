@@ -67,19 +67,7 @@ class MultipleSequenceAlignment:
         X = tf.placeholder(tf.float32, [self.num_seqs, self.max_seq_len, self.alphabet_len], name="X_flat")
         X_flat = tf.reshape(X, [self.num_seqs, self.max_seq_len *self.alphabet_len])
 
-
-
         weights = tf.map_fn(lambda x: 1.0/ tf.reduce_sum(tf.cast(tf.reduce_sum(tf.multiply(X_flat, x), axis=1) / tf.reduce_sum(x) > 1 - cutoff, tf.float32)), X_flat)
-
-
-        #X_norm_factor = tf.reduce_sum(X_flat, axis=1, keep_dims=True)
-
-
-
-        #sq_X = tf.matmul(X_flat, X_flat, transpose_b=True)
-        #norm_X = sq_X / X_norm_factor
-
-        #weights = 1.0 / tf.reduce_sum(tf.cast(norm_X > 1 - cutoff, tf.float32), axis=1)
 
         with tf.Session() as sess:
             return sess.run(weights, feed_dict={X: encoded_seqs})
@@ -118,7 +106,8 @@ class MultipleSequenceAlignment:
         """
 
         # Trim off the end (after the end token)
-        trimmed_seq = seq[:np.sum(seq)]
+        #import pdb; pdb.set_trace()
+        trimmed_seq = seq[:int(np.sum(seq))]
 
         encoded_seq = np.argmax(trimmed_seq, 1)
         decoded_seq = map(lambda idx: self.rev_alphabet_map[idx], encoded_seq)
