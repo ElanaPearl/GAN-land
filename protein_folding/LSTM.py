@@ -264,8 +264,8 @@ if __name__ == '__main__':
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
                 saver.save(sess, os.path.join(checkpoint_log_path,'model_{}_{}'.format(epoch,i)))
 
-                if np.sum(test_target[0]) < len(test_target[0]):
-                    import pdb; pdb.set_trace()
+                #if np.sum(test_target[0]) < len(test_target[0]):
+                #    import pdb; pdb.set_trace()
 
                 logging.info("target: {}".format(MSA.one_hot_to_str(test_target[0])))
                 logging.info("pred:   {}".format(MSA.one_hot_to_str(test_pred[0])))
