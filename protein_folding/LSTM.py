@@ -44,7 +44,7 @@ class VariableSequenceLabelling:
             self.test_error = tf.summary.scalar('test_error',self.error)
             self.train_error = tf.summary.scalar('train_error',self.error)
         self.cost = self.get_cost()
-        self.optimize = self.get_optimizer()
+        self.optimize, self.gradient_summary = self.get_optimizer()
 
     
     def get_length(self):
@@ -105,7 +105,12 @@ class VariableSequenceLabelling:
         learning_rate = 0.001
         optimizer = tf.train.AdamOptimizer(learning_rate)
         with tf.name_scope('minimize_cost'):
-            return optimizer.minimize(self.cost)
+            gvs = optimizer.compute_gradients(self.cost)
+            grads, gvars = list(zip(*gvs)[0]), list(zip(*gvs)[1])
+            clip_norm = 10.0 # THIS IS A HYPERPARAMETER
+            clipped_grads, global_norm = tf.clip_by_global_norm(grads, clip_norm)
+            clipped_gvs = zip(clipped_grads, gvars)
+            return optimizer.apply_gradients(clipped_gvs), tf.summary.scalar("GradientNorm", global_norm) # collections=["train_batch", "train_dense"]
 
 
     def get_error(self):
@@ -147,11 +152,12 @@ class VariableSequenceLabelling:
 
         readable_seq = [rev_alphabet_map[seed]]
 
-        for idx in range(1, self.max_length):
-            logits = sess.run(self.prediction, {data:sequence})
-            next_logit = logits[0,idx,:]
-            next_pred = np.random.choice(np.arange(self.alphabet_len), p=next_logit)
-            sequence[0, idx, next_pred] = 1
+        for idx in range(self.max_length-1):
+            full_pred_dist = session.run(self.prediction, {data:sequence})
+
+            next_pos_pred_dist = full_pred_dist[0, idx, :]
+            next_pred = np.random.choice(np.arange(self.alphabet_len), p=next_pos_pred_dist)
+            sequence[0, idx+1, next_pred] = 1
             readable_seq.append(rev_alphabet_map[next_pred])
 
         # FILTER OUT ONLY THE LETTERS BEFORE THE *
@@ -289,8 +295,9 @@ if __name__ == '__main__':
 
             batch_data, batch_target = MSA.next_batch(batch_size)
 
-            _, train_err_summary = sess.run([model.optimize, model.train_error], {data: batch_data, target: batch_target})
+            _, gradient_summary, train_err_summary = sess.run([model.optimize, model.gradient_summary, model.train_error], {data: batch_data, target: batch_target})
             writer.add_summary(train_err_summary, epoch*num_batches_per_epoch + i)
+            writer.add_summary(gradient_summary, epoch*num_batches_per_epoch + i)
 
         test_data, test_target = MSA.next_batch(batch_size, test=True)
         logging.info("Error: {}".format(sess.run(model.error, {data: test_data, target: test_target})))
