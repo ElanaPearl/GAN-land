@@ -53,7 +53,7 @@ class MultipleSequenceAlignment:
             self.seed_weights = [first_vals[k] for k in self.alphabet]
 
             with open(seed_weight_path,'w') as f:
-                pickle.dump(seed_weights, f)
+                pickle.dump(self.seed_weights, f)
 
 
         # SELECT TEST AND TRAIN SET
