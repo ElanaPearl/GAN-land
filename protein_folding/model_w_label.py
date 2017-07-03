@@ -4,18 +4,25 @@ import random
 import cPickle as pickle
 import os
 
+from datetime import datetime
+run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
 TEST_ALIGN_ID = 'alignments/FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
 END_TOKEN = '*'
 USE_SMALL = False
-MED_SIZE = 10000
+MED_SIZE = 1000
 
 class MultipleSequenceAlignment:
-    def __init__(self, filename, weight_path='SEQ_WEIGHTS.pkl', test_ids_path='test_ids.pkl', seed_weight_path='seed_weights.pkl'):
-        self.filename = filename
+    #def __init__(self, filename, weight_path='SEQ_WEIGHTS.pkl',
+    #            test_ids_path='test_ids.pkl', seed_weight_path='seed_weights.pkl'):
+    def __init__(self, filename, weight_path='seq_weights_fixed.pkl', 
+                                test_ids_path='test_ids_{}.pkl'.format(run_time)):
 
-        self.alphabet = 'ACDEFGHIKLMNPQRSTVWY*'
-        
-        self.acceptable_seq_alphabet = self.alphabet + '.-'
+        self.filename = filename
+        alphabet_no_gaps = 'ACDEFGHIKLMNPQRSTVWY*'
+        alphabet_w_gaps = 'ACDEFGHIKLMNPQRSTVWY-'
+
+        self.alphabet = alphabet_w_gaps
         self.alphabet_len = len(self.alphabet)
         self.alphabet_map = {s: i for i, s in enumerate(self.alphabet)}
         self.rev_alphabet_map = {i: s for i, s in enumerate(self.alphabet)}
@@ -26,12 +33,10 @@ class MultipleSequenceAlignment:
         # GET METADATA ABOUT SEQUENCES
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
         self.num_seqs = len(self.seqs)
-        self.test_size = self.num_seqs/5
-        self.train_size = self.num_seqs - self.test_size
-
+        
 
         # GET WEIGHTS FOR SEQUENCES
-        if os.path.exists(weight_path):
+        if os.path.exists(weight_path):    
             with open(weight_path) as f:
                 self.seq_weights = pickle.load(f)
         else:
@@ -39,24 +44,22 @@ class MultipleSequenceAlignment:
             with open(weight_path,'w') as f:
                 pickle.dump(self.seq_weights, f)
 
+        # Remove gaps and re-adjust seq lens
+        self.seqs = {k: v.replace('-','') for k,v in self.seqs.iteritems()}
+        self.alphabet = alphabet_no_gaps
+        self.alphabet_len = len(self.alphabet)
+        self.alphabet_map = {s: i for i, s in enumerate(self.alphabet)}
+        self.rev_alphabet_map = {i: s for i, s in enumerate(self.alphabet)}
+        self.max_seq_len = max(len(seq) for seq in self.seqs.values())
 
-        if os.path.exists(seed_weight_path):
-            with open(seed_weight_path) as f:
-                self.seed_weights = pickle.load(f)
-        else:
-            first_vals = dict(zip(list(self.alphabet),np.zeros(self.alphabet_len)))
-            for i, v in enumerate(self.seqs.values()):
-                first_vals[v[0]] += self.seq_weights[i]
-            
-            norm_const = sum(first_vals.values())
-            first_vals = {k: v / norm_const for k, v in first_vals.iteritems()}
-            self.seed_weights = [first_vals[k] for k in self.alphabet]
-
-            with open(seed_weight_path,'w') as f:
-                pickle.dump(self.seed_weights, f)
-
+  
+        self.seed_weights = self.calc_seed_weights()
+        
 
         # SELECT TEST AND TRAIN SET
+        self.test_size = self.num_seqs/5
+        self.train_size = self.num_seqs - self.test_size
+
         if os.path.exists(test_ids_path):
             with open(test_ids_path) as f:
                 self.test_idx = pickle.load(f)
@@ -76,9 +79,20 @@ class MultipleSequenceAlignment:
         self.unused_train_idx = dict(zip(self.train_idx, self.seq_weights[self.train_idx]))
 
 
+    def calc_seed_weights(self):
+        first_vals = dict(zip(list(self.alphabet),np.zeros(self.alphabet_len)))
+        for i, v in enumerate(self.seqs.values()):
+            first_vals[v[0]] += self.seq_weights[i]
+
+        norm_const = sum(first_vals.values())
+        first_vals = {k: v / norm_const for k, v in first_vals.iteritems()}
+        return [first_vals[k] for k in self.alphabet]
+
+
     def calc_seq_weights(self):
         # Create encoded version of all of the data
         encoded_seqs = self.encode_all()
+        self.all_encoded = encoded_seqs
         cutoff = 0.2
 
         X = tf.placeholder(tf.float32, [self.num_seqs, self.max_seq_len, self.alphabet_len], name="X_flat")
@@ -194,11 +208,11 @@ class MultipleSequenceAlignment:
 
         for aa in curr_seq:
             # If it is a capital letter and in the alphabet add it to clean seq
-            if aa in self.alphabet_map:
+            if aa in self.alphabet:
                 encoded_seq += aa
 
             # If the sequence includes non aa letters, ignore the sequence
-            elif aa.upper() not in self.acceptable_seq_alphabet:
+            elif aa.upper() not in self.alphabet and aa != '.':
                 ignore_this_seq = True
 
         if not ignore_this_seq:
@@ -231,7 +245,6 @@ class MultipleSequenceAlignment:
                         if USE_SMALL and i == MED_SIZE:
                             return self.seqs
                         i += 1
-                        
 
                     current_id = line.rstrip()[1:]
                     current_sequence = ""
