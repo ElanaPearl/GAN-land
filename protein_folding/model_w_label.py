@@ -3,6 +3,7 @@ import tensorflow as tf
 import random
 import cPickle as pickle
 import os
+from sklearn.cluster import KMeans
 
 from datetime import datetime
 run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -11,6 +12,7 @@ TEST_ALIGN_ID = 'alignments/FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id10
 END_TOKEN = '*'
 USE_SMALL = False
 MED_SIZE = 1000
+NUM_GROUPS = 50 # ARBITRARY HYPERPARAMETER UGH
 
 class MultipleSequenceAlignment:
     #def __init__(self, filename, weight_path='SEQ_WEIGHTS.pkl',
@@ -36,13 +38,55 @@ class MultipleSequenceAlignment:
         
 
         # GET WEIGHTS FOR SEQUENCES
-        if os.path.exists(weight_path):    
+        if os.path.exists(weight_path): 
+            print "RESTORING WEIGHTS"   
             with open(weight_path) as f:
                 self.seq_weights = pickle.load(f)
         else:
+            print "GETTING OLD WEIGHTS"
             self.seq_weights = self.calc_seq_weights()
             with open(weight_path,'w') as f:
                 pickle.dump(self.seq_weights, f)
+
+        # GET GROUPS FOR SEQUENCES
+        grouping_path = 'seq_groupings_{}.pkl'.format(NUM_GROUPS)
+        if os.path.exists(grouping_path): 
+            print "RESTORING GROUPINGS"   
+            with open(grouping_path) as f:
+                seq_groupings = pickle.load(f)
+        else:
+            print "GETTING NEW GROUPINGS" 
+            seq_groupings = self.get_seq_groupings()
+            with open(grouping_path,'w') as f:
+                pickle.dump(seq_groupings, f)
+
+        # SELECT TEST AND TRAIN SET
+        if os.path.exists(test_ids_path):
+            with open(test_ids_path) as f:
+                self.test_idx = pickle.load(f)
+        else:
+            test_size = 0
+            all_groups = set(np.arange(NUM_GROUPS))
+            self.test_idx = []
+            while test_size < self.num_seqs/6:
+                group_to_add = random.choice(list(all_groups))
+                idx_to_add = np.where(seq_groupings == group_to_add)[0]
+                self.test_idx += list(idx_to_add)
+                test_size += len(idx_to_add)
+                all_groups.remove(group_to_add)
+
+            with open(test_ids_path, 'w') as f:
+                pickle.dump(self.test_idx, f)
+
+        self.train_idx = list(set(np.arange(self.num_seqs)) - set(self.test_idx))
+
+        self.test_size = len(self.test_idx)
+        self.train_size = len(self.train_idx)
+
+        # DICTIONARIES TO KEEP TRACK OF WHICH INDICES HAVE BEEN USED IN A GIVEN EPOCH
+        self.unused_test_idx = dict(zip(self.test_idx, self.seq_weights[self.test_idx]))
+        self.unused_train_idx = dict(zip(self.train_idx, self.seq_weights[self.train_idx]))
+
 
         # Remove gaps and re-adjust seq lens
         self.seqs = {k: v.replace('-','') for k,v in self.seqs.iteritems()}
@@ -52,31 +96,17 @@ class MultipleSequenceAlignment:
         self.rev_alphabet_map = {i: s for i, s in enumerate(self.alphabet)}
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
 
-  
+        # Calculate distribution of first elements of seqs (for generation purposes)
         self.seed_weights = self.calc_seed_weights()
-        
-
-        # SELECT TEST AND TRAIN SET
-        self.test_size = self.num_seqs/5
-        self.train_size = self.num_seqs - self.test_size
-
-        if os.path.exists(test_ids_path):
-            with open(test_ids_path) as f:
-                self.test_idx = pickle.load(f)
-        else:
-            self.test_idx = np.random.choice(np.arange(self.num_seqs), \
-                                         size=self.test_size, \
-                                         replace=False, \
-                                         p=self.seq_weights/sum(self.seq_weights))
-            with open(test_ids_path, 'w') as f:
-                pickle.dump(self.test_idx, f)
-
-        self.train_idx = list(set(np.arange(self.num_seqs)) - set(self.test_idx))
 
 
-        # DICTIONARIES TO KEEP TRACK OF WHICH INDICES HAVE BEEN USED IN A GIVEN EPOCH
-        self.unused_test_idx = dict(zip(self.test_idx, self.seq_weights[self.test_idx]))
-        self.unused_train_idx = dict(zip(self.train_idx, self.seq_weights[self.train_idx]))
+    def get_seq_groupings(self):
+        # GET GROUPS FOR SEQUENCES
+        encoded = self.encode_all()
+        encoded = np.reshape(encoded, (encoded.shape[0], encoded.shape[1]*encoded.shape[2]))
+        KM = KMeans(n_clusters=NUM_GROUPS)
+        KM.fit(encoded)
+        return KM.labels_
 
 
     def calc_seed_weights(self):
@@ -89,10 +119,10 @@ class MultipleSequenceAlignment:
         return [first_vals[k] for k in self.alphabet]
 
 
+
     def calc_seq_weights(self):
         # Create encoded version of all of the data
         encoded_seqs = self.encode_all()
-        self.all_encoded = encoded_seqs
         cutoff = 0.2
 
         X = tf.placeholder(tf.float32, [self.num_seqs, self.max_seq_len, self.alphabet_len], name="X_flat")
