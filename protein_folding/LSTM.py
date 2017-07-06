@@ -1,10 +1,6 @@
-# Much code adopted from: danijar.com/variable-sequence-lengths-in-tensorflow/
 import functools
 import tensorflow as tf
 from tensorflow.contrib import rnn
-#from tensorflow.contrib.rnn import dynamic_rnn
-#from tensorflow.contrib.rnn import core_rnn_cell
-
 from model_w_label import MultipleSequenceAlignment
 from datetime import datetime
 import os
@@ -13,13 +9,10 @@ import cPickle as pickle
 import numpy as np
 from math import ceil
 import logging
+import tools
 
 
-# TODO: incorperate this in somewhere so it isnt just a rando global variable
-rev_alphabet_map = {i: s for i, s in enumerate('ACDEFGHIKLMNPQRSTVWY*')}
-
-class VariableSequenceLabelling:
-
+class LSTM:
     def __init__(self, data, target, num_hidden=200, num_layers=3, use_multilayer=True, seed_weights=None):
         self.data = data
         self.target = target
@@ -45,8 +38,6 @@ class VariableSequenceLabelling:
         self.cross_entropy = self.get_cross_entropy()
         self.cost = self.get_cost()
         self.optimize, self.gradient_summary = self.get_optimizer()
-
-        
 
     
     def get_length(self):
@@ -137,17 +128,6 @@ class VariableSequenceLabelling:
         cross_entropy /= tf.cast(self.length, tf.float32)
         return cross_entropy
 
-        #self.data = mutated_d
-        #self.target = mutated_t
-        #mutated_prob = _cross_ent(self.target, self.prediction, self.length)
-        """
-        self.data = wildtype_d
-        self.target = wildtype_t
-        wildtype_prob = _cross_ent(self.target, self.prediction, self.length)        
-
-        return tf.divide(mutated_prob, wildtype_prob)
-        """
-        #return mutated_prob
 
     @staticmethod
     def _weight_and_bias(in_size, out_size):
@@ -171,7 +151,7 @@ class VariableSequenceLabelling:
         
         sequence[0, 0, seed] = 1
 
-        readable_seq = [rev_alphabet_map[seed]]
+        readable_seq = [tools.rev_alphabet_map[seed]]
 
         for idx in range(self.max_length-1):
             full_pred_dist = session.run(self.prediction, {data:sequence})
@@ -179,16 +159,7 @@ class VariableSequenceLabelling:
             next_pos_pred_dist = full_pred_dist[0, idx, :]
             next_pred = np.random.choice(np.arange(self.alphabet_len), p=next_pos_pred_dist)
             sequence[0, idx+1, next_pred] = 1
-            readable_seq.append(rev_alphabet_map[next_pred])
-
-        # FILTER OUT ONLY THE LETTERS BEFORE THE *
-        """"
-        trimmed_seq = []
-        for x in readable_seq:
-            if x == '*':
-                break
-            trimmed_seq.append(x)
-        """
+            readable_seq.append(tools.rev_alphabet_map[next_pred])
 
         return ''.join(readable_seq)
 
@@ -224,15 +195,14 @@ if __name__ == '__main__':
 
     # TODO: ADD A WEIGHT PATH HERE TOO
 
-    if not os.path.exists(graph_log_path):
+    if not restore_path:
+        os.makedirs(log_path)
         os.makedirs(graph_log_path)
-
-    if not os.path.exists(checkpoint_log_path):
         os.makedirs(checkpoint_log_path)
 
+    # Log the flags
     logging.basicConfig(level=logging.INFO, filename=logfile_path,
                     format='%(asctime)-15s %(message)s')
-
 
     for flag_name in ['align_name', 'batch_size', 'num_epochs', 'multilayer', 'restore_path']:
         logging.info("{}: {}".format(flag_name, eval(flag_name)))
@@ -250,7 +220,7 @@ if __name__ == '__main__':
 
 
     print "Constructing model"
-    model = VariableSequenceLabelling(data, target, use_multilayer=multilayer, seed_weights=MSA.seed_weights)
+    model = LSTM(data, target, use_multilayer=multilayer, seed_weights=MSA.seed_weights)
 
 
     writer = tf.summary.FileWriter(graph_log_path)

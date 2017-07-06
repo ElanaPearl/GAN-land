@@ -4,61 +4,36 @@ import random
 import cPickle as pickle
 import os
 from sklearn.cluster import KMeans
-from functools import wraps
-
 from datetime import datetime
+import tools
 
-TEST_ALIGN_ID = 'FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
-END_TOKEN = '*'
 USE_SMALL = True
-MED_SIZE = 1000
+TRIM_SIZE = 1000
 NUM_GROUPS = 50 # ARBITRARY HYPERPARAMETER UGH
 
-def lazy_calculate(function, path):
-    if os.path.exists(path):
-        with open(path) as f:
-            return pickle.load(f)
-    else:
-        data = function()
-        with open(path, 'w') as f:
-            pickle.dump(data, f)
-        return data
-    return wrapper
-
-
 class MultipleSequenceAlignment:
-    def __init__(self, filename, log_path):
+    def __init__(self, gene_name, log_path):
 
-        self.filename = os.path.join('alignments',filename)
-
-        self.gene_name = filename.split('_')[0]
-
-        alphabet_no_gaps = 'ACDEFGHIKLMNPQRSTVWY*'
-        alphabet_w_gaps = 'ACDEFGHIKLMNPQRSTVWY-'
-
-        self.alphabet = alphabet_w_gaps
-        self.alphabet_len = len(self.alphabet)
-        self.alphabet_map = {s: i for i, s in enumerate(self.alphabet)}
-        self.rev_alphabet_map = {i: s for i, s in enumerate(self.alphabet)}
+        filename = os.path.join('alignments', tools.get_alignment_filename(gene_name))
 
         # READ IN DATA
-        self.seqs = self._read_data()
+        self.seqs = self._read_data(filename)
 
         # GET METADATA ABOUT SEQUENCES
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
         self.num_seqs = len(self.seqs)
         
         # GET WEIGHTS FOR SEQUENCES
-        seq_log_path = os.path.join('seq_logs','{}_seq_weights.pkl'.format(self.gene_name))
-        self.seq_weights = lazy_calculate(self.calc_seq_weights, seq_log_path)
+        seq_log_path = os.path.join('seq_logs','{}_seq_weights.pkl'.format(gene_name))
+        self.seq_weights = tools.lazy_calculate(self.calc_seq_weights, seq_log_path)
 
         # GET CLUSTERS FOR SEQUENCES
-        cluster_path = os.path.join('seq_logs','{}_{}_clusters.pkl'.format(self.gene_name,NUM_GROUPS))
-        self.seq_clusters = lazy_calculate(self.cluster_seqs, cluster_path)
+        cluster_path = os.path.join('seq_logs','{}_{}_clusters.pkl'.format(gene_name,NUM_GROUPS))
+        self.seq_clusters = tools.lazy_calculate(self.cluster_seqs, cluster_path)
 
         # SELECT TEST AND TRAIN SET
         test_id_path = os.path.join(log_path,'test_ids.pkl')
-        self.test_idx = lazy_calculate(self.choose_test_set, test_id_path)
+        self.test_idx = tools.lazy_calculate(self.choose_test_set, test_id_path)
         self.train_idx = list(set(np.arange(self.num_seqs)) - set(self.test_idx))
 
         self.test_size = len(self.test_idx)
@@ -68,28 +43,24 @@ class MultipleSequenceAlignment:
         self.unused_test_idx = dict(zip(self.test_idx, self.seq_weights[self.test_idx]))
         self.unused_train_idx = dict(zip(self.train_idx, self.seq_weights[self.train_idx]))
 
-        # Remove gaps and re-adjust seq lens
-        self.seqs = {k: v.replace('-','') for k,v in self.seqs.iteritems()}
-        self.alphabet = alphabet_no_gaps
-        self.alphabet_len = len(self.alphabet)
-        self.alphabet_map = {s: i for i, s in enumerate(self.alphabet)}
-        self.rev_alphabet_map = {i: s for i, s in enumerate(self.alphabet)}
+        # Remove gaps
+        self.seqs = {k: v.replace(tools.GAP,'') for k,v in self.seqs.iteritems()}
+
+        # Re-adjust the max sequence length
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
 
-        # Calculate distribution of first elements of seqs (for generation purposes)
-        seed_weight_path = os.path.join('seq_logs','{}_seed_weights.pkl'.format(self.gene_name))
-        self.seed_weights = lazy_calculate(self.calc_seed_weights, seed_weight_path)
+        # GET DIST OF FIRST ELEMENT OF SEQS (for generation purposes)
+        seed_weight_path = os.path.join('seq_logs','{}_seed_weights.pkl'.format(gene_name))
+        self.seed_weights = tools.lazy_calculate(self.calc_seed_weights, seed_weight_path)
 
 
     def choose_test_set(self):
-        test_size = 0
         all_groups = set(np.arange(NUM_GROUPS))
         test_idx = []
-        while test_size < self.num_seqs/6:
+        while len(test_idx) < self.num_seqs/6:
             group_to_add = random.choice(list(all_groups))
             idx_to_add = np.where(self.seq_clusters == group_to_add)[0]
             test_idx += list(idx_to_add)
-            test_size += len(idx_to_add)
             all_groups.remove(group_to_add)
         return test_idx
 
@@ -103,21 +74,22 @@ class MultipleSequenceAlignment:
 
 
     def calc_seed_weights(self):
-        first_vals = dict(zip(list(self.alphabet),np.zeros(self.alphabet_len)))
+        first_vals = dict(zip(list(tools.alphabet),np.zeros(tools.alphabet_len)))
         for i, v in enumerate(self.seqs.values()):
             first_vals[v[0]] += self.seq_weights[i]
 
         norm_const = sum(first_vals.values())
         first_vals = {k: v / norm_const for k, v in first_vals.iteritems()}
-        return [first_vals[k] for k in self.alphabet]
+        return [first_vals[k] for k in tools.alphabet]
+
 
     def calc_seq_weights(self):
         # Create encoded version of all of the data
         encoded_seqs = self.encode_all()
         cutoff = 0.2
 
-        X = tf.placeholder(tf.float32, [self.num_seqs, self.max_seq_len, self.alphabet_len], name="X_flat")
-        X_flat = tf.reshape(X, [self.num_seqs, self.max_seq_len *self.alphabet_len])
+        X = tf.placeholder(tf.float32, [self.num_seqs, self.max_seq_len, tools.alphabet_len], name="X_flat")
+        X_flat = tf.reshape(X, [self.num_seqs, self.max_seq_len * tools.alphabet_len])
 
         weights = tf.map_fn(lambda x: 1.0/ tf.reduce_sum(tf.cast(tf.reduce_sum(tf.multiply(X_flat, x), axis=1) / tf.reduce_sum(x) > 1 - cutoff, tf.float32)), X_flat)
 
@@ -127,11 +99,11 @@ class MultipleSequenceAlignment:
    
     # TODO: combine encode_all and str_to_one_hot into one fxn bc they're basically the same
     def encode_all(self):
-        encoded_seqs = np.zeros((self.num_seqs, self.max_seq_len, self.alphabet_len))
+        encoded_seqs = np.zeros((self.num_seqs, self.max_seq_len, tools.alphabet_len))
 
         for i, seq in enumerate(self.seqs.values()):
             # Encode the string as an array of indices
-            encoded_seq = [self.alphabet_map[aa] for aa in seq]
+            encoded_seq = [tools.alphabet_map[aa] for aa in seq]
 
             # Turn this into one hot encoding
             encoded_seqs[i, np.arange(len(seq)), encoded_seq] = 1
@@ -142,10 +114,10 @@ class MultipleSequenceAlignment:
     def str_to_one_hot(self, seq):
         
         # Encode the string as an array of indices
-        encoded_seq = [self.alphabet_map[aa] for aa in seq]
+        encoded_seq = [tools.alphabet_map[aa] for aa in seq]
 
         # Turn this into one hot encoding
-        one_hot_seq = np.zeros((self.max_seq_len, self.alphabet_len))
+        one_hot_seq = np.zeros((self.max_seq_len, tools.alphabet_len))
         one_hot_seq[np.arange(len(encoded_seq)), encoded_seq] = 1
         return one_hot_seq
 
@@ -162,7 +134,7 @@ class MultipleSequenceAlignment:
         trimmed_seq = seq[:int(np.sum(seq))]
 
         encoded_seq = np.argmax(trimmed_seq, 1)
-        decoded_seq = map(lambda idx: self.rev_alphabet_map[idx], encoded_seq)
+        decoded_seq = map(lambda idx: tools.rev_alphabet_map[idx], encoded_seq)
         return ''.join(decoded_seq)
 
 
@@ -176,8 +148,8 @@ class MultipleSequenceAlignment:
         with an additional end token at the end
         """
 
-        mb = np.zeros((batch_size, self.max_seq_len, self.alphabet_len))
-        output_mb = np.zeros((batch_size, self.max_seq_len, self.alphabet_len))
+        mb = np.zeros((batch_size, self.max_seq_len, tools.alphabet_len))
+        output_mb = np.zeros((batch_size, self.max_seq_len, tools.alphabet_len))
 
 
         if test:
@@ -229,18 +201,18 @@ class MultipleSequenceAlignment:
 
         for aa in curr_seq:
             # If it is a capital letter and in the alphabet add it to clean seq
-            if aa in self.alphabet:
+            if aa in tools.alphabet or aa == tools.GAP:
                 encoded_seq += aa
 
             # If the sequence includes non aa letters, ignore the sequence
-            elif aa.upper() not in self.alphabet and aa != '.':
+            elif aa.upper() not in tools.alphabet + '.':
                 ignore_this_seq = True
 
         if not ignore_this_seq:
             self.seqs[curr_id] = encoded_seq
 
 
-    def _read_data(self):
+    def _read_data(self, filename):
         """ Converts data into
 
         Reads in the a2m alignment file an converts it into a dictionary where
@@ -251,7 +223,7 @@ class MultipleSequenceAlignment:
         self.seqs = {}
         i = 0
 
-        with open(self.filename)as f:
+        with open(filename)as f:
             current_sequence = ""
             current_id = None
 
@@ -262,8 +234,7 @@ class MultipleSequenceAlignment:
                     if current_id is not None:
                         self._add_sequence(current_id, current_sequence)
 
-                        
-                        if USE_SMALL and i == MED_SIZE:
+                        if USE_SMALL and i == TRIM_SIZE:
                             return self.seqs
                         i += 1
 
