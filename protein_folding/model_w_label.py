@@ -19,10 +19,11 @@ def lazy_calculate(function, path):
         with open(path) as f:
             return pickle.load(f)
     else:
-        data = function
+        data = function()
         with open(path, 'w') as f:
             pickle.dump(data, f)
         return data
+    return wrapper
 
 
 class MultipleSequenceAlignment:
@@ -30,7 +31,7 @@ class MultipleSequenceAlignment:
 
         self.filename = os.path.join('alignments',filename)
 
-        gene_name = filename.split('_')[0]
+        self.gene_name = filename.split('_')[0]
 
         alphabet_no_gaps = 'ACDEFGHIKLMNPQRSTVWY*'
         alphabet_w_gaps = 'ACDEFGHIKLMNPQRSTVWY-'
@@ -47,44 +48,17 @@ class MultipleSequenceAlignment:
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
         self.num_seqs = len(self.seqs)
         
-        # TODO: MAKE A FUNCTION THAT CHECK IF A PATH EXISTS AND IF SO RESTORES AND ELSE
-        # CALCULATES THEN DUMPS -- note this all still assumes you have a seq_logs folder
-
         # GET WEIGHTS FOR SEQUENCES
+        seq_log_path = os.path.join('seq_logs','{}_seq_weights.pkl'.format(self.gene_name))
+        self.seq_weights = lazy_calculate(self.calc_seq_weights, seq_log_path)
 
-        seq_log_path = os.path.join('seq_logs','{}_seq_weights.pkl'.format(gene_name))
-        if os.path.exists(seq_log_path): 
-            print "RESTORING WEIGHTS"   
-            with open(seq_log_path) as f:
-                self.seq_weights = pickle.load(f)
-        else:
-            print "CALCULATING NEW WEIGHTS"
-            self.seq_weights = self.calc_seq_weights()
-            with open(seq_log_path,'w') as f:
-                pickle.dump(self.seq_weights, f)
-
-        # GET GROUPS FOR SEQUENCES
-        cluster_path = os.path.join('seq_logs','{}_{}_clusters.pkl'.format(gene_name,NUM_GROUPS))
-        if os.path.exists(cluster_path): 
-            print "RESTORING GROUPINGS"   
-            with open(cluster_path) as f:
-                self.seq_clusters = pickle.load(f)
-        else:
-            print "CALCULATING NEW GROUPINGS" 
-            self.seq_clusters = self.cluster_seqs()
-            with open(cluster_path,'w') as f:
-                pickle.dump(self.seq_clusters, f)
+        # GET CLUSTERS FOR SEQUENCES
+        cluster_path = os.path.join('seq_logs','{}_{}_clusters.pkl'.format(self.gene_name,NUM_GROUPS))
+        self.seq_clusters = lazy_calculate(self.cluster_seqs, cluster_path)
 
         # SELECT TEST AND TRAIN SET
-        # Check if the test set has already been chosen, if so restore that
-        if os.path.exists(os.path.join(log_path,'test_ids.pkl')):
-            with open(os.path.join(log_path,'test_ids.pkl')) as f:
-                self.test_idx = pickle.load(f)
-        else:
-            self.test_idx = self.choose_test_set()
-            with open(os.path.join(log_path,'test_ids.pkl'), 'w') as f:
-                pickle.dump(self.test_idx, f)
-
+        test_id_path = os.path.join(log_path,'test_ids.pkl')
+        self.test_idx = lazy_calculate(self.choose_test_set, test_id_path)
         self.train_idx = list(set(np.arange(self.num_seqs)) - set(self.test_idx))
 
         self.test_size = len(self.test_idx)
@@ -93,7 +67,6 @@ class MultipleSequenceAlignment:
         # DICTIONARIES TO KEEP TRACK OF WHICH INDICES HAVE BEEN USED IN A GIVEN EPOCH
         self.unused_test_idx = dict(zip(self.test_idx, self.seq_weights[self.test_idx]))
         self.unused_train_idx = dict(zip(self.train_idx, self.seq_weights[self.train_idx]))
-
 
         # Remove gaps and re-adjust seq lens
         self.seqs = {k: v.replace('-','') for k,v in self.seqs.iteritems()}
@@ -118,7 +91,7 @@ class MultipleSequenceAlignment:
             all_groups.remove(group_to_add)
         return test_idx
 
-
+    #@lazy_calculate(path=os.path.join('seq_logs','{}_{}_clusters.pkl'.format(self.gene_name,NUM_GROUPS)))
     def cluster_seqs(self):
         encoded = self.encode_all()
         encoded = np.reshape(encoded, (encoded.shape[0], encoded.shape[1]*encoded.shape[2]))
@@ -136,7 +109,7 @@ class MultipleSequenceAlignment:
         first_vals = {k: v / norm_const for k, v in first_vals.iteritems()}
         return [first_vals[k] for k in self.alphabet]
 
-
+    #@lazy_calculate(path=os.path.join('seq_logs','{}_seq_weights.pkl'.format(self.gene_name)))
     def calc_seq_weights(self):
         # Create encoded version of all of the data
         encoded_seqs = self.encode_all()
