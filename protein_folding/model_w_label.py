@@ -77,7 +77,9 @@ class MultipleSequenceAlignment:
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
 
         # Calculate distribution of first elements of seqs (for generation purposes)
-        self.seed_weights = self.calc_seed_weights()
+        seed_weight_path = os.path.join('seq_logs','{}_seed_weights.pkl'.format(self.gene_name))
+        self.seed_weights = lazy_calculate(self.calc_seed_weights, seed_weight_path)
+
 
     def choose_test_set(self):
         test_size = 0
@@ -91,7 +93,7 @@ class MultipleSequenceAlignment:
             all_groups.remove(group_to_add)
         return test_idx
 
-    #@lazy_calculate(path=os.path.join('seq_logs','{}_{}_clusters.pkl'.format(self.gene_name,NUM_GROUPS)))
+
     def cluster_seqs(self):
         encoded = self.encode_all()
         encoded = np.reshape(encoded, (encoded.shape[0], encoded.shape[1]*encoded.shape[2]))
@@ -109,7 +111,6 @@ class MultipleSequenceAlignment:
         first_vals = {k: v / norm_const for k, v in first_vals.iteritems()}
         return [first_vals[k] for k in self.alphabet]
 
-    #@lazy_calculate(path=os.path.join('seq_logs','{}_seq_weights.pkl'.format(self.gene_name)))
     def calc_seq_weights(self):
         # Create encoded version of all of the data
         encoded_seqs = self.encode_all()
