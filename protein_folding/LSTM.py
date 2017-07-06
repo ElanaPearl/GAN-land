@@ -20,7 +20,7 @@ rev_alphabet_map = {i: s for i, s in enumerate('ACDEFGHIKLMNPQRSTVWY*')}
 
 class VariableSequenceLabelling:
 
-    def __init__(self, data, target, num_hidden=200, num_layers=3, use_multilayer=True, end_token=20, seed_weights=None):
+    def __init__(self, data, target, num_hidden=200, num_layers=3, use_multilayer=True, seed_weights=None):
         self.data = data
         self.target = target
 
@@ -28,8 +28,6 @@ class VariableSequenceLabelling:
 
         self.max_length = int(self.target.get_shape()[1])
         self.alphabet_len = int(self.target.get_shape()[2])
-
-        self.END_TOKEN = end_token
 
         self._num_hidden = num_hidden
         self._num_layers = num_layers
@@ -45,6 +43,8 @@ class VariableSequenceLabelling:
             self.train_error = tf.summary.scalar('train_error',self.error)
         self.cost = self.get_cost()
         self.optimize, self.gradient_summary = self.get_optimizer()
+
+        self.cross_entropy = self.get_cross_entropy()
 
     
     def get_length(self):
@@ -128,6 +128,35 @@ class VariableSequenceLabelling:
             mistakes /= tf.cast(self.length, tf.float32)
             return tf.reduce_mean(mistakes)
 
+
+    def get_cross_entropy(self):
+        # Get the predicted value for the correct target value
+        # (self.target is one hot so it will mask out all predicted values
+        # except for the correct one)
+        cross_entropy = self.target * tf.log(self.prediction)
+        cross_entropy = -tf.reduce_sum(cross_entropy, reduction_indices=2)
+        # This just masks out elements after the end of the target sequence
+        mask = tf.sign(tf.reduce_max(tf.abs(self.target), reduction_indices=2))
+        # Only consider the error for the length of the protein
+        cross_entropy *= mask
+        # This gives you the sum of all errors in each seq
+        cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=1)
+        # Divide each seq's error by its length
+        cross_entropy /= tf.cast(self.length, tf.float32)
+        return cross_entropy
+
+        #self.data = mutated_d
+        #self.target = mutated_t
+        #mutated_prob = _cross_ent(self.target, self.prediction, self.length)
+        """
+        self.data = wildtype_d
+        self.target = wildtype_t
+        wildtype_prob = _cross_ent(self.target, self.prediction, self.length)        
+
+        return tf.divide(mutated_prob, wildtype_prob)
+        """
+        #return mutated_prob
+
     @staticmethod
     def _weight_and_bias(in_size, out_size):
         weight = tf.get_variable(name='weight',
@@ -144,7 +173,7 @@ class VariableSequenceLabelling:
 
         # TODO: change this so that it calculates them
         if self.seed_weights:
-            seed = np.random.choice(np.arange(len(self.seed_weights)), p = self.seed_weights)
+            seed = np.random.choice(np.arange(len(self.seed_weights)), p=self.seed_weights)
         else:
             seed = np.random.randint(0, self.alphabet_len-2)
         
@@ -176,12 +205,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--align_name', help='The name of the alignment file for the protein family', \
                          default='FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m')
-    parser.add_argument('--batch_size', help='Number of sequences per batch', type=int, default=50)
+    parser.add_argument('--batch_size', help='Number of sequences per batch', type=int, default=100)
     parser.add_argument('--num_epochs', help='Number of epochs of training', type=int, default=10)
     parser.add_argument('--multilayer', help='Use multiple LSTM layers', type=bool, default=False)
     parser.add_argument('--restore_path', help='Path to restore model, should be of the format '\
                         'year-month-date_hour-min-sec\'', default='')
-    
+
     align_name = os.path.join('./alignments/', parser.parse_args().align_name)
     batch_size = parser.parse_args().batch_size
     num_epochs = parser.parse_args().num_epochs
@@ -223,14 +252,13 @@ if __name__ == '__main__':
     alphabet_len = MSA.alphabet_len
     num_batches_per_epoch = int(ceil(float(MSA.train_size) / batch_size))
     num_test_batches = MSA.test_size / batch_size
-    END_TOKEN = MSA.alphabet_map['*']
 
     data = tf.placeholder(tf.float32, [None, max_length, alphabet_len], name='data')
     target = tf.placeholder(tf.float32, [None, max_length, alphabet_len], name='target')
 
 
     print "Constructing model"
-    model = VariableSequenceLabelling(data, target, use_multilayer=multilayer, end_token=END_TOKEN, seed_weights=MSA.seed_weights)
+    model = VariableSequenceLabelling(data, target, use_multilayer=multilayer, seed_weights=MSA.seed_weights)
 
 
     writer = tf.summary.FileWriter(graph_log_path)
@@ -270,9 +298,6 @@ if __name__ == '__main__':
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
                 saver.save(sess, os.path.join(checkpoint_log_path,'model_{}_{}'.format(epoch,i)))
 
-                #if np.sum(test_target[0]) < len(test_target[0]):
-                #    import pdb; pdb.set_trace()
-
                 logging.info("target: {}".format(MSA.one_hot_to_str(test_target[0])))
                 logging.info("pred:   {}".format(MSA.one_hot_to_str(test_pred[0])))
 
@@ -284,14 +309,6 @@ if __name__ == '__main__':
                 #sample_summary = sess.run(model.sample_seq_summary, {seq_placeholder: seq_sample})
                 #writer.add_summary(sample_summary, epoch*num_batches_per_epoch + i)
 
-            """
-            if i == 10 or i == 1800:
-                variables_names =[v.name for v in tf.trainable_variables()]
-                values = sess.run(variables_names)
-
-                with open('trained_vars_{}_{}.pkl'.format(epoch, i),'w') as f:
-                    pickle.dump(dict(zip(variables_names, values)) ,f)
-            """
 
             batch_data, batch_target = MSA.next_batch(batch_size)
 
@@ -306,3 +323,4 @@ if __name__ == '__main__':
         # The number of batches of a given epoch that we already trained is only relevant 
         # to the first epoch we train after we restore the model
         pretrained_batches = 0
+
