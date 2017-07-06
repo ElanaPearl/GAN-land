@@ -13,7 +13,7 @@ import tools
 
 
 class LSTM:
-    def __init__(self, data, target, num_hidden=200, num_layers=3, use_multilayer=True, seed_weights=None):
+    def __init__(self, data, target, seed_weights, num_hidden=150, num_layers=2, use_multilayer=True):
         self.data = data
         self.target = target
 
@@ -144,10 +144,7 @@ class LSTM:
         sequence = np.zeros((1, self.max_length, self.alphabet_len))
 
         # TODO: change this so that it calculates them
-        if self.seed_weights:
-            seed = np.random.choice(np.arange(len(self.seed_weights)), p=self.seed_weights)
-        else:
-            seed = np.random.randint(0, self.alphabet_len-2)
+        seed = np.random.choice(np.arange(len(self.seed_weights)), p=self.seed_weights)
         
         sequence[0, 0, seed] = 1
 
@@ -166,62 +163,53 @@ class LSTM:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--align_name', help='The name of the alignment file for the protein family', \
-                         default='FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m')
+    parser.add_argument('--gene_name', help='The name of the gene for the protein family', default='FYN')
     parser.add_argument('--batch_size', help='Number of sequences per batch', type=int, default=100)
     parser.add_argument('--num_epochs', help='Number of epochs of training', type=int, default=10)
     parser.add_argument('--multilayer', help='Use multiple LSTM layers', type=bool, default=False)
     parser.add_argument('--restore_path', help='Path to restore model, should be of the format '\
-                        'year-month-date_hour-min-sec\'', default='')
+                        '\'year-month-date_hour-min-sec\'', default='')
 
-    align_name = os.path.join('./alignments/', parser.parse_args().align_name)
+    gene_name = parser.parse_args().gene_name
     batch_size = parser.parse_args().batch_size
     num_epochs = parser.parse_args().num_epochs
     multilayer = parser.parse_args().multilayer
     restore_path = parser.parse_args().restore_path
 
-    # Restore the old model
+    # Set run time (or restore run_time from last run)
     if restore_path:
         run_time = restore_path
     else:
         run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 
-    log_path = os.path.join('./model_logs', 'LSTM_'+run_time)
-    logfile_path = os.path.join(log_path, 'logfile.txt')
+    # Set up logging directories
+    log_path = os.path.join('model_logs', gene_name, run_time)
     graph_log_path = os.path.join(log_path, 'graphs')
     checkpoint_log_path = os.path.join(log_path, 'checkpoints')
-    test_ids_path = os.path.join(log_path, 'test_ids.pkl')
-
-    # TODO: ADD A WEIGHT PATH HERE TOO
 
     if not restore_path:
         os.makedirs(log_path)
         os.makedirs(graph_log_path)
         os.makedirs(checkpoint_log_path)
 
-    # Log the flags
-    logging.basicConfig(level=logging.INFO, filename=logfile_path,
+    # Set up logging file
+    logging.basicConfig(level=logging.INFO, filename=os.path.join(log_path, 'logfile.txt'),
                     format='%(asctime)-15s %(message)s')
 
-    for flag_name in ['align_name', 'batch_size', 'num_epochs', 'multilayer', 'restore_path']:
-        logging.info("{}: {}".format(flag_name, eval(flag_name)))
+    # Log the flag values
+    for flag_name, flag_value in vars(parser.parse_args()).iteritems():
+        logging.info("{}: {}".format(flag_name, flag_value))
 
     print "Getting multiple sequence alignment"
-    MSA = MultipleSequenceAlignment(align_name, test_ids_path=test_ids_path)
+    MSA = MultipleSequenceAlignment(gene_name, run_time=run_time)
 
-    max_length = MSA.max_seq_len
-    alphabet_len = MSA.alphabet_len
-    num_batches_per_epoch = int(ceil(float(MSA.train_size) / batch_size))
-    num_test_batches = MSA.test_size / batch_size
-
-    data = tf.placeholder(tf.float32, [None, max_length, alphabet_len], name='data')
-    target = tf.placeholder(tf.float32, [None, max_length, alphabet_len], name='target')
+    data = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='data')
+    target = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='target')
 
 
     print "Constructing model"
-    model = LSTM(data, target, use_multilayer=multilayer, seed_weights=MSA.seed_weights)
-
+    model = LSTM(data, target, seed_weights=MSA.seed_weights, use_multilayer=multilayer)
 
     writer = tf.summary.FileWriter(graph_log_path)
     sess = tf.Session()
@@ -244,6 +232,8 @@ if __name__ == '__main__':
         pretrained_batches = 0
 
 
+    num_batches_per_epoch = int(ceil(float(MSA.train_size) / batch_size))
+    
     print "Starting training"
     for epoch in range(pretrained_epochs, num_epochs):
         logging.info("Epoch: {}".format(epoch))

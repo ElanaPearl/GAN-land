@@ -1,7 +1,6 @@
 import numpy as np
 import tensorflow as tf
 import random
-import cPickle as pickle
 import os
 from sklearn.cluster import KMeans
 from datetime import datetime
@@ -9,12 +8,12 @@ import tools
 
 USE_SMALL = True
 TRIM_SIZE = 1000
-NUM_GROUPS = 50 # ARBITRARY HYPERPARAMETER UGH
 
 class MultipleSequenceAlignment:
-    def __init__(self, gene_name, log_path):
+    def __init__(self, gene_name, run_time):
 
         filename = os.path.join('alignments', tools.get_alignment_filename(gene_name))
+        make_path = lambda x: os.path.join('model_logs', gene_name, x)
 
         # READ IN DATA
         self.seqs = self._read_data(filename)
@@ -22,17 +21,17 @@ class MultipleSequenceAlignment:
         # GET METADATA ABOUT SEQUENCES
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
         self.num_seqs = len(self.seqs)
-        
+
         # GET WEIGHTS FOR SEQUENCES
-        seq_log_path = os.path.join('seq_logs','{}_seq_weights.pkl'.format(gene_name))
+        seq_log_path = make_path('seq_weights.pkl')
         self.seq_weights = tools.lazy_calculate(self.calc_seq_weights, seq_log_path)
 
         # GET CLUSTERS FOR SEQUENCES
-        cluster_path = os.path.join('seq_logs','{}_{}_clusters.pkl'.format(gene_name,NUM_GROUPS))
+        cluster_path = make_path('clusters_{}.pkl'.format(tools.n_clusters))
         self.seq_clusters = tools.lazy_calculate(self.cluster_seqs, cluster_path)
 
         # SELECT TEST AND TRAIN SET
-        test_id_path = os.path.join(log_path,'test_ids.pkl')
+        test_id_path = make_path(os.path.join(run_time, 'test_ids.pkl'))
         self.test_idx = tools.lazy_calculate(self.choose_test_set, test_id_path)
         self.train_idx = list(set(np.arange(self.num_seqs)) - set(self.test_idx))
 
@@ -44,18 +43,18 @@ class MultipleSequenceAlignment:
         self.unused_train_idx = dict(zip(self.train_idx, self.seq_weights[self.train_idx]))
 
         # Remove gaps
-        self.seqs = {k: v.replace(tools.GAP,'') for k,v in self.seqs.iteritems()}
+        self.seqs = tools.remove_gaps(self.seqs)
 
         # Re-adjust the max sequence length
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
 
         # GET DIST OF FIRST ELEMENT OF SEQS (for generation purposes)
-        seed_weight_path = os.path.join('seq_logs','{}_seed_weights.pkl'.format(gene_name))
+        seed_weight_path = make_path('seed_weights.pkl')
         self.seed_weights = tools.lazy_calculate(self.calc_seed_weights, seed_weight_path)
 
 
     def choose_test_set(self):
-        all_groups = set(np.arange(NUM_GROUPS))
+        all_groups = set(np.arange(tools.n_clusters))
         test_idx = []
         while len(test_idx) < self.num_seqs/6:
             group_to_add = random.choice(list(all_groups))
@@ -68,7 +67,7 @@ class MultipleSequenceAlignment:
     def cluster_seqs(self):
         encoded = self.encode_all()
         encoded = np.reshape(encoded, (encoded.shape[0], encoded.shape[1]*encoded.shape[2]))
-        KM = KMeans(n_clusters=NUM_GROUPS)
+        KM = KMeans(n_clusters=tools.n_clusters)
         KM.fit(encoded)
         return KM.labels_
 
@@ -86,12 +85,11 @@ class MultipleSequenceAlignment:
     def calc_seq_weights(self):
         # Create encoded version of all of the data
         encoded_seqs = self.encode_all()
-        cutoff = 0.2
 
         X = tf.placeholder(tf.float32, [self.num_seqs, self.max_seq_len, tools.alphabet_len], name="X_flat")
         X_flat = tf.reshape(X, [self.num_seqs, self.max_seq_len * tools.alphabet_len])
 
-        weights = tf.map_fn(lambda x: 1.0/ tf.reduce_sum(tf.cast(tf.reduce_sum(tf.multiply(X_flat, x), axis=1) / tf.reduce_sum(x) > 1 - cutoff, tf.float32)), X_flat)
+        weights = tf.map_fn(lambda x: 1.0/ tf.reduce_sum(tf.cast(tf.reduce_sum(tf.multiply(X_flat, x), axis=1) / tf.reduce_sum(x) > 1 - tools.similarity_cutoff, tf.float32)), X_flat)
 
         with tf.Session() as sess:
             return sess.run(weights, feed_dict={X: encoded_seqs})
@@ -166,7 +164,7 @@ class MultipleSequenceAlignment:
 
                 seq = self.seqs[self.seqs.keys()[idx]]
                 mb[i] = self.str_to_one_hot(seq)
-                output_mb[i] = self.str_to_one_hot(seq[1:] + END_TOKEN)
+                output_mb[i] = self.str_to_one_hot(seq[1:] + tools.END_TOKEN)
 
                 # Pop the seq off so that you don't use it again
                 del unused_seq_info[idx]
