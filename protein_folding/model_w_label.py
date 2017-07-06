@@ -1,16 +1,15 @@
-import numpy as np
-import tensorflow as tf
-import random
-import os
 from sklearn.cluster import KMeans
 from datetime import datetime
+import tensorflow as tf
+import numpy as np
+import random
+import os
+
 import tools
 
-USE_SMALL = True
-TRIM_SIZE = 1000
 
 class MultipleSequenceAlignment:
-    def __init__(self, gene_name, run_time):
+    def __init__(self, gene_name, run_time, seq_limit=None):
 
         filename = os.path.join('alignments', tools.get_alignment_filename(gene_name))
         make_path = lambda x: os.path.join('model_logs', gene_name, x)
@@ -219,7 +218,6 @@ class MultipleSequenceAlignment:
         """
 
         self.seqs = {}
-        i = 0
 
         with open(filename)as f:
             current_sequence = ""
@@ -232,9 +230,8 @@ class MultipleSequenceAlignment:
                     if current_id is not None:
                         self._add_sequence(current_id, current_sequence)
 
-                        if USE_SMALL and i == TRIM_SIZE:
+                        if seq_limit and len(self.seqs) == seq_limit:
                             return self.seqs
-                        i += 1
 
                     current_id = line.rstrip()[1:]
                     current_sequence = ""

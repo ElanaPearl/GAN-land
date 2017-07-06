@@ -1,14 +1,12 @@
-import functools
-import tensorflow as tf
-from tensorflow.contrib import rnn
-from model_w_label import MultipleSequenceAlignment
 from datetime import datetime
-import os
-import argparse
-import cPickle as pickle
-import numpy as np
+import tensorflow as tf
 from math import ceil
+import numpy as np
+import argparse
 import logging
+import os
+
+from model_w_label import MultipleSequenceAlignment
 import tools
 
 
@@ -169,12 +167,16 @@ if __name__ == '__main__':
     parser.add_argument('--multilayer', help='Use multiple LSTM layers', type=bool, default=False)
     parser.add_argument('--restore_path', help='Path to restore model, should be of the format '\
                         '\'year-month-date_hour-min-sec\'', default='')
+    parser.add_argument('--seq_limit', help='If debugging and you want to only use a limited number '\
+                        'of sequences for the sake of time, set this.', type=int, default=0)
+
 
     gene_name = parser.parse_args().gene_name
     batch_size = parser.parse_args().batch_size
     num_epochs = parser.parse_args().num_epochs
     multilayer = parser.parse_args().multilayer
     restore_path = parser.parse_args().restore_path
+    seq_limit = parser.parse_args().seq_limit
 
     # Set run time (or restore run_time from last run)
     if restore_path:
@@ -202,7 +204,7 @@ if __name__ == '__main__':
         logging.info("{}: {}".format(flag_name, flag_value))
 
     print "Getting multiple sequence alignment"
-    MSA = MultipleSequenceAlignment(gene_name, run_time=run_time)
+    MSA = MultipleSequenceAlignment(gene_name, run_time=run_time, seq_limit=seq_limit)
 
     data = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='data')
     target = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='target')
