@@ -14,6 +14,8 @@ class MultipleSequenceAlignment:
         filename = os.path.join('alignments', tools.get_alignment_filename(gene_name))
         make_path = lambda x: os.path.join('model_logs', gene_name, x)
 
+        self.seq_limit = seq_limit
+
         # READ IN DATA
         self.seqs = self._read_data(filename)
 
@@ -230,7 +232,7 @@ class MultipleSequenceAlignment:
                     if current_id is not None:
                         self._add_sequence(current_id, current_sequence)
 
-                        if seq_limit and len(self.seqs) == seq_limit:
+                        if self.seq_limit and len(self.seqs) == self.seq_limit:
                             return self.seqs
 
                     current_id = line.rstrip()[1:]
