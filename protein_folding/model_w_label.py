@@ -4,23 +4,34 @@ import random
 import cPickle as pickle
 import os
 from sklearn.cluster import KMeans
+from functools import wraps
 
 from datetime import datetime
-run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-TEST_ALIGN_ID = 'alignments/FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
+TEST_ALIGN_ID = 'FYN_HUMAN_hmmerbit_plmc_n5_m30_f50_t0.2_r80-145_id100_b33.a2m'
 END_TOKEN = '*'
-USE_SMALL = False
+USE_SMALL = True
 MED_SIZE = 1000
 NUM_GROUPS = 50 # ARBITRARY HYPERPARAMETER UGH
 
-class MultipleSequenceAlignment:
-    #def __init__(self, filename, weight_path='SEQ_WEIGHTS.pkl',
-    #            test_ids_path='test_ids.pkl', seed_weight_path='seed_weights.pkl'):
-    def __init__(self, filename, weight_path='seq_weights_fixed.pkl', 
-                                test_ids_path='test_ids_{}.pkl'.format(run_time)):
+def lazy_calculate(function, path):
+    if os.path.exists(path):
+        with open(path) as f:
+            return pickle.load(f)
+    else:
+        data = function
+        with open(path, 'w') as f:
+            pickle.dump(data, f)
+        return data
 
-        self.filename = filename
+
+class MultipleSequenceAlignment:
+    def __init__(self, filename, log_path):
+
+        self.filename = os.path.join('alignments',filename)
+
+        gene_name = filename.split('_')[0]
+
         alphabet_no_gaps = 'ACDEFGHIKLMNPQRSTVWY*'
         alphabet_w_gaps = 'ACDEFGHIKLMNPQRSTVWY-'
 
@@ -36,46 +47,42 @@ class MultipleSequenceAlignment:
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
         self.num_seqs = len(self.seqs)
         
+        # TODO: MAKE A FUNCTION THAT CHECK IF A PATH EXISTS AND IF SO RESTORES AND ELSE
+        # CALCULATES THEN DUMPS -- note this all still assumes you have a seq_logs folder
 
         # GET WEIGHTS FOR SEQUENCES
-        if os.path.exists(weight_path): 
+
+        seq_log_path = os.path.join('seq_logs','{}_seq_weights.pkl'.format(gene_name))
+        if os.path.exists(seq_log_path): 
             print "RESTORING WEIGHTS"   
-            with open(weight_path) as f:
+            with open(seq_log_path) as f:
                 self.seq_weights = pickle.load(f)
         else:
-            print "GETTING OLD WEIGHTS"
+            print "CALCULATING NEW WEIGHTS"
             self.seq_weights = self.calc_seq_weights()
-            with open(weight_path,'w') as f:
+            with open(seq_log_path,'w') as f:
                 pickle.dump(self.seq_weights, f)
 
         # GET GROUPS FOR SEQUENCES
-        grouping_path = 'seq_groupings_{}.pkl'.format(NUM_GROUPS)
-        if os.path.exists(grouping_path): 
+        cluster_path = os.path.join('seq_logs','{}_{}_clusters.pkl'.format(gene_name,NUM_GROUPS))
+        if os.path.exists(cluster_path): 
             print "RESTORING GROUPINGS"   
-            with open(grouping_path) as f:
-                seq_groupings = pickle.load(f)
+            with open(cluster_path) as f:
+                self.seq_clusters = pickle.load(f)
         else:
-            print "GETTING NEW GROUPINGS" 
-            seq_groupings = self.get_seq_groupings()
-            with open(grouping_path,'w') as f:
-                pickle.dump(seq_groupings, f)
+            print "CALCULATING NEW GROUPINGS" 
+            self.seq_clusters = self.cluster_seqs()
+            with open(cluster_path,'w') as f:
+                pickle.dump(self.seq_clusters, f)
 
         # SELECT TEST AND TRAIN SET
-        if os.path.exists(test_ids_path):
-            with open(test_ids_path) as f:
+        # Check if the test set has already been chosen, if so restore that
+        if os.path.exists(os.path.join(log_path,'test_ids.pkl')):
+            with open(os.path.join(log_path,'test_ids.pkl')) as f:
                 self.test_idx = pickle.load(f)
         else:
-            test_size = 0
-            all_groups = set(np.arange(NUM_GROUPS))
-            self.test_idx = []
-            while test_size < self.num_seqs/6:
-                group_to_add = random.choice(list(all_groups))
-                idx_to_add = np.where(seq_groupings == group_to_add)[0]
-                self.test_idx += list(idx_to_add)
-                test_size += len(idx_to_add)
-                all_groups.remove(group_to_add)
-
-            with open(test_ids_path, 'w') as f:
+            self.test_idx = self.choose_test_set()
+            with open(os.path.join(log_path,'test_ids.pkl'), 'w') as f:
                 pickle.dump(self.test_idx, f)
 
         self.train_idx = list(set(np.arange(self.num_seqs)) - set(self.test_idx))
@@ -99,9 +106,20 @@ class MultipleSequenceAlignment:
         # Calculate distribution of first elements of seqs (for generation purposes)
         self.seed_weights = self.calc_seed_weights()
 
+    def choose_test_set(self):
+        test_size = 0
+        all_groups = set(np.arange(NUM_GROUPS))
+        test_idx = []
+        while test_size < self.num_seqs/6:
+            group_to_add = random.choice(list(all_groups))
+            idx_to_add = np.where(self.seq_clusters == group_to_add)[0]
+            test_idx += list(idx_to_add)
+            test_size += len(idx_to_add)
+            all_groups.remove(group_to_add)
+        return test_idx
 
-    def get_seq_groupings(self):
-        # GET GROUPS FOR SEQUENCES
+
+    def cluster_seqs(self):
         encoded = self.encode_all()
         encoded = np.reshape(encoded, (encoded.shape[0], encoded.shape[1]*encoded.shape[2]))
         KM = KMeans(n_clusters=NUM_GROUPS)
@@ -117,7 +135,6 @@ class MultipleSequenceAlignment:
         norm_const = sum(first_vals.values())
         first_vals = {k: v / norm_const for k, v in first_vals.iteritems()}
         return [first_vals[k] for k in self.alphabet]
-
 
 
     def calc_seq_weights(self):
