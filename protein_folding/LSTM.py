@@ -41,10 +41,12 @@ class VariableSequenceLabelling:
             self.error = self.get_error()
             self.test_error = tf.summary.scalar('test_error',self.error)
             self.train_error = tf.summary.scalar('train_error',self.error)
+
+        self.cross_entropy = self.get_cross_entropy()
         self.cost = self.get_cost()
         self.optimize, self.gradient_summary = self.get_optimizer()
 
-        self.cross_entropy = self.get_cross_entropy()
+        
 
     
     def get_length(self):
@@ -88,17 +90,7 @@ class VariableSequenceLabelling:
 
 
     def get_cost(self):
-        # Compute cross entropy for each frame.
-        with tf.variable_scope('compute_cross_ent'):
-            cross_entropy = self.target * tf.log(self.prediction)
-            cross_entropy = -tf.reduce_sum(cross_entropy, reduction_indices=2)
-            mask = tf.sign(tf.reduce_max(tf.abs(self.target), reduction_indices=2))
-            cross_entropy *= mask
-        # Average over actual sequence lengths.
-        with tf.variable_scope('avg_over_seq_len'):
-            cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=1)
-            cross_entropy /= tf.cast(self.length, tf.float32)
-            return tf.reduce_mean(cross_entropy)
+        return tf.reduce_mean(tf.negative(self.cross_entropy))
 
 
     def get_optimizer(self):
@@ -134,7 +126,7 @@ class VariableSequenceLabelling:
         # (self.target is one hot so it will mask out all predicted values
         # except for the correct one)
         cross_entropy = self.target * tf.log(self.prediction)
-        cross_entropy = -tf.reduce_sum(cross_entropy, reduction_indices=2)
+        cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=2)
         # This just masks out elements after the end of the target sequence
         mask = tf.sign(tf.reduce_max(tf.abs(self.target), reduction_indices=2))
         # Only consider the error for the length of the protein

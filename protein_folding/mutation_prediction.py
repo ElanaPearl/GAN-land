@@ -38,7 +38,7 @@ mutations = np.zeros((wildtype_d.shape[0],2))
 # Add random mutations to each mutation
 for seq_idx in range(wildtype_d.shape[0]):
     # Choose random idx to randomly mutate (anything but first/last position)
-    idx_to_change = random.choice(range(1, wildtype_d.shape[1]-1))
+    idx_to_change = random.choice(range(wildtype_d.shape[1]-1))
 
     old_val = np.argmax(wildtype_d[seq_idx,idx_to_change,:])
     new_val = random.choice(range(wildtype_d.shape[2]))
@@ -52,10 +52,12 @@ for seq_idx in range(wildtype_d.shape[0]):
 
     mutations[seq_idx] = [old_val, new_val]
 
+#mutated_first_aa = np.argmax()
+
 print "Getting mutation predictions"
 mutated_prob = sess.run(model.cross_entropy, {data: mutated_d, target: mutated_t})
 wildtype_prob = sess.run(model.cross_entropy, {data: wildtype_d, target: wildtype_t})
 
-mutation_prob = wildtype_prob/mutated_prob
+#mutation_prob = (mutated_prob + MSA.seed_weights[mutated_d[:,0,:]])
 
 import pdb; pdb.set_trace()
