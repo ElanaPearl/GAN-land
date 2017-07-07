@@ -1,5 +1,6 @@
 import tensorflow as tf
 import numpy as np
+import argparse
 import random
 import os
 
@@ -7,8 +8,13 @@ from model_w_label import MultipleSequenceAlignment
 from LSTM import LSTM
 import tools
 
-gene = 'PABP'
-run_time = '2017-07-06_17-22-08'
+parser = argparse.ArgumentParser()
+parser.add_argument('--gene_name', help='The name of the gene for the protein family', default='PABP')
+parser.add_argument('--restore_path', help='Path to restore model, should be of the format '\
+                        '\'year-month-date_hour-min-sec\'', default='')
+
+gene = parser.parse_args().gene_name
+run_time = parser.parse_args().restore_path
 
 log_path = os.path.join('model_logs', gene, run_time)
 
