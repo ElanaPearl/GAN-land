@@ -2,6 +2,7 @@ from sklearn.cluster import KMeans
 from datetime import datetime
 import tensorflow as tf
 import numpy as np
+import logging
 import random
 import os
 
@@ -14,9 +15,14 @@ class MultipleSequenceAlignment:
         filename = os.path.join('alignments', tools.get_alignment_filename(gene_name))
         make_path = lambda x: os.path.join('model_logs', gene_name, x)
 
+        logging.basicConfig(level=logging.INFO, filename=os.path.join(make_path(run_time), 'logfile.txt'),
+                    format='%(asctime)-15s %(message)s')
+
         self.seq_limit = seq_limit
 
         # READ IN DATA
+        self.full_ref_seq = None
+        self.trimmed_ref_seq = None
         self.seqs = self._read_data(filename)
 
         # GET METADATA ABOUT SEQUENCES
@@ -25,6 +31,12 @@ class MultipleSequenceAlignment:
 
         # GET WEIGHTS FOR SEQUENCES
         seq_log_path = make_path('seq_weights.pkl')
+        
+        logging.info("CALCULATING SEQ WEIGHTS")
+        #self.seq_weights = self.calc_seq_weights()
+        #logging.info("SAVING SEQ WEIGHTS")
+        #with open(seq_log_path, 'w') as f:
+        #    pickle.dump(self.seq_weights, f)
         self.seq_weights = tools.lazy_calculate(self.calc_seq_weights, seq_log_path)
 
         # GET CLUSTERS FOR SEQUENCES
@@ -55,6 +67,7 @@ class MultipleSequenceAlignment:
 
 
     def choose_test_set(self):
+        print "CHOOSING TEST SET"
         all_groups = set(np.arange(tools.n_clusters))
         test_idx = []
         while len(test_idx) < self.num_seqs/6:
@@ -66,6 +79,7 @@ class MultipleSequenceAlignment:
 
 
     def cluster_seqs(self):
+        print "CLUSTERING SEQS"
         encoded = self.encode_all()
         encoded = np.reshape(encoded, (encoded.shape[0], encoded.shape[1]*encoded.shape[2]))
         KM = KMeans(n_clusters=tools.n_clusters)
@@ -74,6 +88,7 @@ class MultipleSequenceAlignment:
 
 
     def calc_seed_weights(self):
+        print "CALCULATING SEED WEIGHTS"
         first_vals = dict(zip(list(tools.alphabet),np.zeros(tools.alphabet_len)))
         for i, v in enumerate(self.seqs.values()):
             first_vals[v[0]] += self.seq_weights[i]
@@ -84,14 +99,18 @@ class MultipleSequenceAlignment:
 
 
     def calc_seq_weights(self):
+        print "CALCULATING SEQ WEIGHTS"
         # Create encoded version of all of the data
+        logging.info('ENCODING')
         encoded_seqs = self.encode_all()
 
         X = tf.placeholder(tf.float32, [self.num_seqs, self.max_seq_len, tools.alphabet_len], name="X_flat")
         X_flat = tf.reshape(X, [self.num_seqs, self.max_seq_len * tools.alphabet_len])
 
+        logging.info('MAPPING')
         weights = tf.map_fn(lambda x: 1.0/ tf.reduce_sum(tf.cast(tf.reduce_sum(tf.multiply(X_flat, x), axis=1) / tf.reduce_sum(x) > 1 - tools.similarity_cutoff, tf.float32)), X_flat)
 
+        logging.info('RUNNING THE DATA THROUGH')
         with tf.Session() as sess:
             return sess.run(weights, feed_dict={X: encoded_seqs})
 
@@ -195,20 +214,24 @@ class MultipleSequenceAlignment:
         If it doesn't, then it adds this sequence to the sequences dictionary
         """
 
-        encoded_seq = ''
+        cleaned_seq = ''
         ignore_this_seq = False
 
         for aa in curr_seq:
             # If it is a capital letter and in the alphabet add it to clean seq
             if aa in tools.alphabet or aa == tools.GAP:
-                encoded_seq += aa
+                cleaned_seq += aa
 
             # If the sequence includes non aa letters, ignore the sequence
             elif aa.upper() not in tools.alphabet + '.':
                 ignore_this_seq = True
 
         if not ignore_this_seq:
-            self.seqs[curr_id] = encoded_seq
+            self.seqs[curr_id] = cleaned_seq
+
+            if not self.full_ref_seq:
+                self.full_ref_seq = curr_seq
+                self.trimmed_ref_seq = cleaned_seq
 
 
     def _read_data(self, filename):

@@ -1,4 +1,5 @@
 import tensorflow as tf
+import pandas as pd
 import numpy as np
 import argparse
 import random
@@ -39,16 +40,16 @@ saver.restore(sess, tf.train.latest_checkpoint(os.path.join(log_path,'checkpoint
 
 
 
-wildtype_d = np.reshape(MSA.str_to_one_hot(MSA.ref_seq), (1, MSA.max_seq_len, tools.alphabet_len))
-wildtype_t = np.reshape(MSA.str_to_one_hot(MSA.ref_seq[1:] + tools.END_TOKEN), (1, MSA.max_seq_len, tools.alphabet_len))
+wildtype_d = np.reshape(MSA.str_to_one_hot(MSA.trimmed_ref_seq), (1, MSA.max_seq_len, tools.alphabet_len))
+wildtype_t = np.reshape(MSA.str_to_one_hot(MSA.trimmed_ref_seq[1:] + tools.END_TOKEN), (1, MSA.max_seq_len, tools.alphabet_len))
 
 
 # Create all possible mutations of the reference sequence
 mutated_d = []
 mutated_t = []
-for i in range(len(MSA.ref_seq)):
+for i in range(len(MSA.trimmed_ref_seq)):
     for j in tools.alphabet:
-        mutated_seq = list(MSA.ref_seq)
+        mutated_seq = list(MSA.trimmed_ref_seq)
         mutated_seq[i] = j
         mutated_d.append(MSA.str_to_one_hot(''.join(mutated_seq)))
         mutated_t.append(MSA.str_to_one_hot(''.join(mutated_seq[1:]) + tools.END_TOKEN))
@@ -66,6 +67,17 @@ mutation_preds = (mutated_prob + mutated_seed_prob) - (wildtype_prob + wildtype_
 
 mutation_preds = np.reshape(mutation_preds,(MSA.max_seq_len, tools.alphabet_len))
 
+
+# Get the positions of each of the elements in our sequence
+used_idx = []
+for i, aa in enumerate(MSA.full_ref_seq):
+    if aa in tools.alphabet:
+        used_idx.append(i+1) # +1 because the experimental data is 1 indexed
+
+
+mutation_preds = pd.DataFrame(mutation_preds, columns=list(tools.alphabet), index=used_idx)
+
 print "Saving!"
-np.savetxt(os.path.join(log_path,'mutation_preds.csv'), mutation_preds, delimiter=',')
+mutation_preds.to_csv(os.path.join(log_path,'mutation_preds.csv'), sep=',')
+#np.savetxt(os.path.join(log_path,'mutation_preds.csv'), mutation_preds, delimiter=',')
 
