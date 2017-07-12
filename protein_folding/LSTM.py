@@ -7,6 +7,7 @@ import logging
 import os
 
 from model_w_label import MultipleSequenceAlignment
+from predict import MutationPrediction
 import tools
 
 
@@ -36,6 +37,7 @@ class LSTM:
         self.cross_entropy = self.get_cross_entropy()
         self.cost = self.get_cost()
         self.optimize, self.gradient_summary = self.get_optimizer()
+
 
     
     def get_length(self):
@@ -169,6 +171,8 @@ if __name__ == '__main__':
                         '\'year-month-date_hour-min-sec\'', default='')
     parser.add_argument('--seq_limit', help='If debugging and you want to only use a limited number '\
                         'of sequences for the sake of time, set this.', type=int, default=0)
+    parser.add_argument('--feature_to_predict', help='Experimental feature to compare mutation'\
+                        'predictions to.', default='')
 
 
     gene_name = parser.parse_args().gene_name
@@ -177,6 +181,7 @@ if __name__ == '__main__':
     multilayer = parser.parse_args().multilayer
     restore_path = parser.parse_args().restore_path
     seq_limit = parser.parse_args().seq_limit
+    feature_to_predict = parser.parse_args().feature_to_predict
 
     # Set run time (or restore run_time from last run)
     if restore_path:
@@ -206,9 +211,13 @@ if __name__ == '__main__':
     print "Getting multiple sequence alignment"
     MSA = MultipleSequenceAlignment(gene_name, run_time=run_time, seq_limit=seq_limit)
 
+    
     data = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='data')
     target = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='target')
+    corr_tensor = tf.placeholder(tf.float32, [], name='spear_corr')
+    corr_summ_tensor = tf.summary.scalar('spear_corr', corr_tensor)
 
+    predictor = MutationPrediction(MSA, feature_to_predict, {'data': data, 'target': target})
 
     print "Constructing model"
     model = LSTM(data, target, seed_weights=MSA.seed_weights, use_multilayer=multilayer)
@@ -216,6 +225,7 @@ if __name__ == '__main__':
     writer = tf.summary.FileWriter(graph_log_path)
     sess = tf.Session()
     writer.add_graph(sess.graph)
+
 
     sess.run(tf.global_variables_initializer())
 
@@ -235,6 +245,7 @@ if __name__ == '__main__':
 
 
     num_batches_per_epoch = int(ceil(float(MSA.train_size) / batch_size))
+
     
     print "Starting training"
     for epoch in range(pretrained_epochs, num_epochs):
@@ -242,7 +253,8 @@ if __name__ == '__main__':
         
         for i in range(pretrained_batches, num_batches_per_epoch):
             if i % batch_size == 0:
-            
+                saver.save(sess, os.path.join(checkpoint_log_path,'model_{}_{}'.format(epoch,i)))
+
                 # GET TEST ERROR
                 test_data, test_target = MSA.next_batch(batch_size, test=True)
                 test_err_summary, test_err, test_pred = sess.run([model.test_error, model.error, model.prediction], {data: test_data, target: test_target})
@@ -250,8 +262,7 @@ if __name__ == '__main__':
                 logging.info("Batch: {}, Error: {}".format(i, test_err))
 
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
-                saver.save(sess, os.path.join(checkpoint_log_path,'model_{}_{}'.format(epoch,i)))
-
+                
                 logging.info("target: {}".format(MSA.one_hot_to_str(test_target[0])))
                 logging.info("pred:   {}".format(MSA.one_hot_to_str(test_pred[0])))
 
@@ -259,6 +270,10 @@ if __name__ == '__main__':
                 seq_sample = model.generate_seq(sess)
                 logging.info("gen:    {}".format(seq_sample))
                 
+                # COMPARE PREDICTIONS TO EXPERIMENTAL RESULTS
+                _, spear_corr = predictor.predict(sess, model)
+                corr_summary = sess.run(corr_summ_tensor, {corr_tensor: spear_corr})
+                writer.add_summary(corr_summary, epoch*num_batches_per_epoch + i)
 
                 #sample_summary = sess.run(model.sample_seq_summary, {seq_placeholder: seq_sample})
                 #writer.add_summary(sample_summary, epoch*num_batches_per_epoch + i)
