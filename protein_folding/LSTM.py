@@ -217,7 +217,7 @@ if __name__ == '__main__':
     corr_tensor = tf.placeholder(tf.float32, [], name='spear_corr')
     corr_summ_tensor = tf.summary.scalar('spear_corr', corr_tensor)
 
-    predictor = MutationPrediction(MSA, feature_to_predict, {'data': data, 'target': target})
+    predictor = MutationPrediction(MSA, feature_to_predict)
 
     print "Constructing model"
     model = LSTM(data, target, seed_weights=MSA.seed_weights, use_multilayer=multilayer)
@@ -271,7 +271,7 @@ if __name__ == '__main__':
                 logging.info("gen:    {}".format(seq_sample))
                 
                 # COMPARE PREDICTIONS TO EXPERIMENTAL RESULTS
-                _, spear_corr = predictor.predict(sess, model)
+                _, spear_corr = predictor.predict(sess, model, data, target)
                 corr_summary = sess.run(corr_summ_tensor, {corr_tensor: spear_corr})
                 writer.add_summary(corr_summary, epoch*num_batches_per_epoch + i)
 
@@ -292,4 +292,3 @@ if __name__ == '__main__':
         # The number of batches of a given epoch that we already trained is only relevant 
         # to the first epoch we train after we restore the model
         pretrained_batches = 0
-
