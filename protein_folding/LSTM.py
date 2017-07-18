@@ -30,13 +30,16 @@ class LSTM:
         self.use_multilayer = use_multilayer
 
         with tf.variable_scope('prediction'):
-            self.prediction = self.get_prediction()
+            self.logits, self.prediction = self.get_prediction()
         with tf.variable_scope('calc_err'):
             self.error = self.get_error()
             self.test_error = tf.summary.scalar('test_error',self.error)
             self.train_error = tf.summary.scalar('train_error',self.error)
 
-        self.cross_entropy = self.get_cross_entropy()
+        # Note this cross entropy gives you the cross ent FOR EACH SEQ in the batch
+        self.cross_entropy = self.get_cross_entropy(self.target, self.prediction)
+        self.entropy = self.get_cross_entropy(self.prediction, self.prediction)
+
         self.cost = self.get_cost()
         self.optimize, self.gradient_summary = self.get_optimizer()
 
@@ -80,29 +83,18 @@ class LSTM:
         weight, bias = self._weight_and_bias(self._num_hidden, self.alphabet_len)
         # Flatten to apply same weights to all time steps.
         with tf.variable_scope('output_to_prediction'):
-            output = tf.reshape(output, [-1, self._num_hidden])
+            logits = tf.reshape(output, [-1, self._num_hidden])
             prediction = tf.nn.softmax(tf.matmul(output, weight) + bias)
             prediction = tf.reshape(prediction, [-1, self.max_length, self.alphabet_len])
-            return prediction
+            return logits, prediction
 
 
     def get_cost(self):
-        entropy = -self.prediction * tf.log(self.prediction)
-        entropy = tf.reduce_sum(entropy, reduction_indices=2)
+        # Get the avg entropy for the whole batch
+        batch_cross_ent = tf.reduce_mean(self.cross_entropy)
+        batch_entropy = tf.reduce_mean(self.entropy)
 
-        # Mask out unused positions
-        mask = tf.sign(tf.reduce_max(tf.abs(self.target), reduction_indices=2))
-        entropy *= mask
-
-        # Average across each seq to get one value per seq
-        entropy = tf.reduce_sum(entropy, reduction_indices=1)
-        entropy /= tf.cast(self.length, tf.float32)
-        # Get batch average
-        entropy = tf.reduce_mean(entropy)
-
-        # Multiply by tuning parameter
-        entropy = entropy * self.entropy_reg
-        return tf.reduce_mean(tf.negative(self.cross_entropy)) - entropy
+        return batch_cross_ent - batch_entropy * self.entropy_reg
 
 
     def get_optimizer(self):
@@ -133,20 +125,18 @@ class LSTM:
             return tf.reduce_mean(mistakes)
 
 
-    def get_cross_entropy(self):
-        # Get the predicted value for the correct target value
-        # (self.target is one hot so it will mask out all predicted values
-        # except for the correct one)
-        cross_entropy = self.target * tf.log(self.prediction)
+    def get_cross_entropy(self, p, q):
+        cross_entropy = - p * tf.log(q)
         cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=2)
-        # This just masks out elements after the end of the target sequence
-        mask = tf.sign(tf.reduce_max(tf.abs(self.target), reduction_indices=2))
-        # Only consider the error for the length of the protein
+
+        # Mask out elements after the end of the target sequence
+        mask = tf.sign(tf.reduce_max(tf.abs(p), reduction_indices=2))
         cross_entropy *= mask
-        # This gives you the sum of all errors in each seq
+
+        # Average across each seq to get one value per seq
         cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=1)
-        # Divide each seq's error by its length
         cross_entropy /= tf.cast(self.length, tf.float32)
+
         return cross_entropy
 
 
