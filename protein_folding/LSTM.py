@@ -10,13 +10,14 @@ from model_w_label import MultipleSequenceAlignment
 from predict import MutationPrediction
 import tools
 
+GRADIENT_LIMIT = 3.0
 
 class LSTM:
-    def __init__(self, data, target, seed_weights, num_hidden=150, num_layers=2, use_multilayer=True):
+    def __init__(self, data, target, dropout, attn_length, num_hidden=250, num_layers=2, use_multilayer=True):
         self.data = data
         self.target = target
-
-        self.seed_weights = seed_weights
+        self.dropout = dropout
+        self.attn_length = attn_length
 
         self.max_length = int(self.target.get_shape()[1])
         self.alphabet_len = int(self.target.get_shape()[2])
@@ -39,7 +40,6 @@ class LSTM:
         self.optimize, self.gradient_summary = self.get_optimizer()
 
 
-    
     def get_length(self):
         with tf.variable_scope('calc_lengths'):
             used = tf.sign(tf.reduce_max(tf.abs(self.data), reduction_indices=2))
@@ -49,9 +49,14 @@ class LSTM:
 
 
     def lstm_cell(self):
-        return tf.contrib.rnn.BasicLSTMCell(
+        cell = tf.contrib.rnn.BasicLSTMCell(
             self._num_hidden, state_is_tuple=True,
             reuse=tf.get_variable_scope().reuse)
+        if self.attn_length:
+            cell = tf.contrib.rnn.AttentionCellWrapper(cell, self.attn_length, state_is_tuple=True)
+        cell = tf.contrib.rnn.DropoutWrapper(cell, output_keep_prob=1.0 - self.dropout)
+
+        return cell
 
 
     def get_prediction(self):
@@ -90,7 +95,7 @@ class LSTM:
         with tf.name_scope('minimize_cost'):
             gvs = optimizer.compute_gradients(self.cost)
             grads, gvars = list(zip(*gvs)[0]), list(zip(*gvs)[1])
-            clip_norm = 10.0 # THIS IS A HYPERPARAMETER
+            clip_norm = GRADIENT_LIMIT # THIS IS A HYPERPARAMETER
             clipped_grads, global_norm = tf.clip_by_global_norm(grads, clip_norm)
             clipped_gvs = zip(clipped_grads, gvars)
             return optimizer.apply_gradients(clipped_gvs), tf.summary.scalar("GradientNorm", global_norm) # collections=["train_batch", "train_dense"]
@@ -140,18 +145,18 @@ class LSTM:
         return weight, bias
 
 
-    def generate_seq(self, session):
+    def generate_seq(self, session, seed_weights):
         sequence = np.zeros((1, self.max_length, self.alphabet_len))
 
         # TODO: change this so that it calculates them
-        seed = np.random.choice(np.arange(len(self.seed_weights)), p=self.seed_weights)
-        
+        seed = np.random.choice(np.arange(len(seed_weights)), p=seed_weights)
+
         sequence[0, 0, seed] = 1
 
         readable_seq = [tools.rev_alphabet_map[seed]]
 
         for idx in range(self.max_length-1):
-            full_pred_dist = session.run(self.prediction, {data:sequence})
+            full_pred_dist = session.run(self.prediction, {data:sequence, dropout: 0.0})
 
             next_pos_pred_dist = full_pred_dist[0, idx, :]
             next_pred = np.random.choice(np.arange(self.alphabet_len), p=next_pos_pred_dist)
@@ -173,7 +178,11 @@ if __name__ == '__main__':
                         'of sequences for the sake of time, set this.', type=int, default=0)
     parser.add_argument('--feature_to_predict', help='Experimental feature to compare mutation'\
                         'predictions to.', default='')
-
+    parser.add_argument('--dropout_prob', help='Value for dropout when training. If left unset, there will be'\
+                        'no dropout aka dropout_prob = 0', type=float, default=0.0)
+    parser.add_argument('--attn_length', help='Length of attention, if 0, no attention is used', type=int, default=0)
+    parser.add_argument('--n_hidden', help='Number of hidden nodes per layer', type=int, default=150)
+    parser.add_argument('--n_layers', help='Number of hidden layers', type=int, default=2)
 
     gene_name = parser.parse_args().gene_name
     batch_size = parser.parse_args().batch_size
@@ -182,13 +191,16 @@ if __name__ == '__main__':
     restore_path = parser.parse_args().restore_path
     seq_limit = parser.parse_args().seq_limit
     feature_to_predict = parser.parse_args().feature_to_predict
+    dropout_prob = parser.parse_args().dropout_prob
+    attn_length = parser.parse_args().attn_length
+    n_hidden = parser.parse_args().n_hidden
+    n_layers = parser.parse_args().n_layers
 
     # Set run time (or restore run_time from last run)
     if restore_path:
         run_time = restore_path
     else:
         run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
 
     # Set up logging directories
     log_path = os.path.join('model_logs', gene_name, run_time)
@@ -214,13 +226,14 @@ if __name__ == '__main__':
     
     data = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='data')
     target = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='target')
-    corr_tensor = tf.placeholder(tf.float32, [], name='spear_corr')
+    dropout = tf.placeholder_with_default(0.0, shape=(), name='dropout')
+    corr_tensor = tf.placeholder(tf.float32, name='spear_corr')
     corr_summ_tensor = tf.summary.scalar('spear_corr', corr_tensor)
 
     predictor = MutationPrediction(MSA, feature_to_predict)
 
     print "Constructing model"
-    model = LSTM(data, target, seed_weights=MSA.seed_weights, use_multilayer=multilayer)
+    model = LSTM(data, target, dropout=dropout, attn_length=attn_length, use_multilayer=multilayer, num_hidden=n_hidden, num_layers=n_layers)
 
     writer = tf.summary.FileWriter(graph_log_path)
     sess = tf.Session()
@@ -246,7 +259,6 @@ if __name__ == '__main__':
 
     num_batches_per_epoch = int(ceil(float(MSA.train_size) / batch_size))
 
-    
     print "Starting training"
     for epoch in range(pretrained_epochs, num_epochs):
         logging.info("Epoch: {}".format(epoch))
@@ -257,7 +269,8 @@ if __name__ == '__main__':
 
                 # GET TEST ERROR
                 test_data, test_target = MSA.next_batch(batch_size, test=True)
-                test_err_summary, test_err, test_pred = sess.run([model.test_error, model.error, model.prediction], {data: test_data, target: test_target})
+                test_err_summary, test_err, test_pred = sess.run([model.test_error, model.error, model.prediction], \
+                                                        {data: test_data, target: test_target, dropout: 0.0})
 
                 logging.info("Batch: {}, Error: {}".format(i, test_err))
 
@@ -267,7 +280,7 @@ if __name__ == '__main__':
                 logging.info("pred:   {}".format(MSA.one_hot_to_str(test_pred[0])))
 
                 # GENERATE RANDOM SAMPLE
-                seq_sample = model.generate_seq(sess)
+                seq_sample = model.generate_seq(sess, MSA.seed_weights)
                 logging.info("gen:    {}".format(seq_sample))
                 
                 # COMPARE PREDICTIONS TO EXPERIMENTAL RESULTS
@@ -281,12 +294,13 @@ if __name__ == '__main__':
 
             batch_data, batch_target = MSA.next_batch(batch_size)
 
-            _, gradient_summary, train_err_summary = sess.run([model.optimize, model.gradient_summary, model.train_error], {data: batch_data, target: batch_target})
+            _, gradient_summary, train_err_summary = sess.run([model.optimize, model.gradient_summary, model.train_error], \
+                                                              {data: batch_data, target: batch_target, dropout: dropout_prob})
             writer.add_summary(train_err_summary, epoch*num_batches_per_epoch + i)
             writer.add_summary(gradient_summary, epoch*num_batches_per_epoch + i)
 
         test_data, test_target = MSA.next_batch(batch_size, test=True)
-        logging.info("Error: {}".format(sess.run(model.error, {data: test_data, target: test_target})))
+        logging.info("Error: {}".format(sess.run(model.error, {data: test_data, target: test_target, dropout: 0.0})))
 
 
         # The number of batches of a given epoch that we already trained is only relevant 
