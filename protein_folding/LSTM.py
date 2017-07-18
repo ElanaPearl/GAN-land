@@ -13,11 +13,12 @@ import tools
 GRADIENT_LIMIT = 3.0
 
 class LSTM:
-    def __init__(self, data, target, dropout, attn_length, num_hidden=250, num_layers=2, use_multilayer=True):
+    def __init__(self, data, target, dropout, attn_length, entropy_reg, num_hidden=250, num_layers=2, use_multilayer=True):
         self.data = data
         self.target = target
         self.dropout = dropout
         self.attn_length = attn_length
+        self.entropy_reg = entropy_reg
 
         self.max_length = int(self.target.get_shape()[1])
         self.alphabet_len = int(self.target.get_shape()[2])
@@ -86,7 +87,22 @@ class LSTM:
 
 
     def get_cost(self):
-        return tf.reduce_mean(tf.negative(self.cross_entropy))
+        entropy = -self.prediction * tf.log(self.prediction)
+        entropy = tf.reduce_sum(entropy, reduction_indices=2)
+
+        # Mask out unused positions
+        mask = tf.sign(tf.reduce_max(tf.abs(self.target), reduction_indices=2))
+        entropy *= mask
+
+        # Average across each seq to get one value per seq
+        entropy = tf.reduce_sum(entropy, reduction_indices=1)
+        entropy /= tf.cast(self.length, tf.float32)
+        # Get batch average
+        entropy = tf.reduce_mean(entropy)
+
+        # Multiply by tuning parameter
+        entropy = entropy * self.entropy_reg
+        return tf.reduce_mean(tf.negative(self.cross_entropy)) - entropy
 
 
     def get_optimizer(self):
@@ -181,6 +197,7 @@ if __name__ == '__main__':
     parser.add_argument('--dropout_prob', help='Value for dropout when training. If left unset, there will be'\
                         'no dropout aka dropout_prob = 0', type=float, default=0.0)
     parser.add_argument('--attn_length', help='Length of attention, if 0, no attention is used', type=int, default=0)
+    parser.add_argument('--entropy_reg', help='How much entropy regularization to use, if 0 none', type=float, default=0.0)
     parser.add_argument('--n_hidden', help='Number of hidden nodes per layer', type=int, default=150)
     parser.add_argument('--n_layers', help='Number of hidden layers', type=int, default=2)
 
@@ -193,6 +210,7 @@ if __name__ == '__main__':
     feature_to_predict = parser.parse_args().feature_to_predict
     dropout_prob = parser.parse_args().dropout_prob
     attn_length = parser.parse_args().attn_length
+    entropy_reg = parser.parse_args().entropy_reg
     n_hidden = parser.parse_args().n_hidden
     n_layers = parser.parse_args().n_layers
 
@@ -233,7 +251,8 @@ if __name__ == '__main__':
     predictor = MutationPrediction(MSA, feature_to_predict)
 
     print "Constructing model"
-    model = LSTM(data, target, dropout=dropout, attn_length=attn_length, use_multilayer=multilayer, num_hidden=n_hidden, num_layers=n_layers)
+    model = LSTM(data, target, dropout=dropout, attn_length=attn_length, entropy_reg=entropy_reg, \
+            use_multilayer=multilayer, num_hidden=n_hidden, num_layers=n_layers)
 
     writer = tf.summary.FileWriter(graph_log_path)
     sess = tf.Session()
