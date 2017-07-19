@@ -11,6 +11,14 @@ alphabet_map = {s: i for i, s in enumerate(alphabet)}
 alphabet_map[GAP] = alphabet_len - 1
 rev_alphabet_map = {i: s for i, s in enumerate(alphabet)}
 
+feature_to_predict = {
+    'BLAT': '2500',
+    'BRCA1': 'e3',
+    'FYN': 'Tm',
+    'GAL4': 'SEL_C_40h',
+    'PABP': 'linear'
+}
+
 
 # HYPER PARAMETERS
 similarity_cutoff = 0.2
@@ -35,6 +43,12 @@ def get_alignment_filename(gene):
         if filename.startswith(gene):
             return filename
 
+def get_results_filename(gene):
+    for filename in os.listdir('experimental_results'):
+        if filename.startswith(gene):
+            return os.path.join('experimental_results',filename)
+
 
 def remove_gaps(seqs):
     return {k: v.replace(GAP, '') for k,v in seqs.iteritems()}
+

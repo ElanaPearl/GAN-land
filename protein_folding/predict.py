@@ -96,8 +96,8 @@ class MutationPrediction:
         wildtype_seed_prob = [self.MSA.seed_weights[i] for i in np.argmax(self.wildtype_d[:,0,:],1)]
         mutated_seed_prob = [self.MSA.seed_weights[i] for i in np.argmax(self.mutated_d[:,0,:],1)]
 
-        wildtype_prob = sess.run(model.cross_entropy, {data: self.wildtype_d, target: self.wildtype_t})
-        mutated_prob = sess.run(model.cross_entropy, {data: self.mutated_d, target: self.mutated_t})
+        wildtype_prob = -sess.run(model.cross_entropy, {data: self.wildtype_d, target: self.wildtype_t})
+        mutated_prob = -sess.run(model.cross_entropy, {data: self.mutated_d, target: self.mutated_t})
 
         mutation_preds = (mutated_prob + mutated_seed_prob) - (wildtype_prob + wildtype_seed_prob)
 

@@ -10,15 +10,15 @@ from model_w_label import MultipleSequenceAlignment
 from predict import MutationPrediction
 import tools
 
-GRADIENT_LIMIT = 3.0
 
 class LSTM:
-    def __init__(self, data, target, dropout, attn_length, entropy_reg, num_hidden=250, num_layers=2, use_multilayer=True):
+    def __init__(self, data, target, dropout, attn_length, entropy_reg, gradient_limit, learning_rate, \
+                num_hidden, num_layers):
         self.data = data
         self.target = target
         self.dropout = dropout
         self.attn_length = attn_length
-        self.entropy_reg = entropy_reg
+        self.learning_rate = learning_rate
 
         self.max_length = int(self.target.get_shape()[1])
         self.alphabet_len = int(self.target.get_shape()[2])
@@ -27,7 +27,6 @@ class LSTM:
         self._num_layers = num_layers
         self.length = self.get_length()
 
-        self.use_multilayer = use_multilayer
 
         with tf.variable_scope('prediction'):
             self.logits, self.prediction = self.get_prediction()
@@ -40,8 +39,8 @@ class LSTM:
         self.cross_entropy = self.get_cross_entropy(self.target, self.logits)
         self.entropy = self.get_cross_entropy(self.prediction, self.logits)
 
-        self.cost = self.get_cost()
-        self.optimize, self.gradient_summary = self.get_optimizer()
+        self.cost = self.get_cost(entropy_reg)
+        self.optimize, self.gradient_summary = self.get_optimizer(gradient_limit, learning_rate)
 
 
     def get_length(self):
@@ -56,6 +55,7 @@ class LSTM:
         cell = tf.contrib.rnn.BasicLSTMCell(
             self._num_hidden, state_is_tuple=True,
             reuse=tf.get_variable_scope().reuse)
+
         if self.attn_length:
             cell = tf.contrib.rnn.AttentionCellWrapper(cell, self.attn_length, state_is_tuple=True)
         cell = tf.contrib.rnn.DropoutWrapper(cell, output_keep_prob=1.0 - self.dropout)
@@ -64,10 +64,10 @@ class LSTM:
 
 
     def get_prediction(self):
-        # Recurrent network.
+        # Recurrent network
         with tf.variable_scope('dynamic_rnn'):
             with tf.variable_scope('LSTM_cell'):
-                if self.use_multilayer:
+                if self._num_layers > 1:
                     cell = tf.contrib.rnn.MultiRNNCell([self.lstm_cell() for _ in range(self._num_layers)])
                 else:
                     cell = self.lstm_cell()
@@ -78,41 +78,35 @@ class LSTM:
                     sequence_length=self.length,
                     dtype=tf.float32
                 )
-        #print output
 
-        # Softmax layer.
-        weight, bias = self._weight_and_bias(self._num_hidden, self.alphabet_len)
-        # Flatten to apply same weights to all time steps.
+        # Softmax layer
+        weight = tf.get_variable(name='weight', shape=[self._num_hidden, self.alphabet_len], initializer=tf.truncated_normal_initializer(stddev=0.01))
+        bias = tf.get_variable(name='bias', shape=[self.alphabet_len], initializer=tf.constant_initializer(0.1))
+
+        # Flatten to apply same weights to all time steps
         with tf.variable_scope('output_to_prediction'):
-            #print "pre-shape output: ", output
             output = tf.reshape(output, [-1, self._num_hidden])
-            #print "post-shape output: ", output
-            #print output, weight, bias
             logits = tf.matmul(output, weight) + bias
-
-            #print "LOGITS"
-            #print logits
             prediction = tf.nn.softmax(logits)
             prediction = tf.reshape(prediction, [-1, self.max_length, self.alphabet_len])
             logits = tf.reshape(logits, [-1, self.max_length, self.alphabet_len])
             return logits, prediction
 
 
-    def get_cost(self):
+    def get_cost(self, entropy_reg):
         # Get the avg entropy for the whole batch
         batch_cross_ent = tf.reduce_mean(self.cross_entropy)
         batch_entropy = tf.reduce_mean(self.entropy)
 
-        return batch_cross_ent - batch_entropy * self.entropy_reg
+        return batch_cross_ent - batch_entropy * entropy_reg
 
 
-    def get_optimizer(self):
-        learning_rate = 0.001
+    def get_optimizer(self, gradient_limit, learning_rate):
         optimizer = tf.train.AdamOptimizer(learning_rate)
         with tf.name_scope('minimize_cost'):
             gvs = optimizer.compute_gradients(self.cost)
             grads, gvars = list(zip(*gvs)[0]), list(zip(*gvs)[1])
-            clip_norm = GRADIENT_LIMIT # THIS IS A HYPERPARAMETER
+            clip_norm = gradient_limit
             clipped_grads, global_norm = tf.clip_by_global_norm(grads, clip_norm)
             clipped_gvs = zip(clipped_grads, gvars)
             return optimizer.apply_gradients(clipped_gvs), tf.summary.scalar("GradientNorm", global_norm) # collections=["train_batch", "train_dense"]
@@ -149,17 +143,6 @@ class LSTM:
         return cross_entropy
 
 
-    @staticmethod
-    def _weight_and_bias(in_size, out_size):
-        weight = tf.get_variable(name='weight',
-                                shape=[in_size, out_size],
-                          initializer=tf.truncated_normal_initializer(stddev=0.01))
-        bias = tf.get_variable(name='bias',
-                              shape=[out_size], 
-                        initializer=tf.constant_initializer(0.1))
-        return weight, bias
-
-
     def generate_seq(self, session, seed_weights):
         sequence = np.zeros((1, self.max_length, self.alphabet_len))
 
@@ -183,47 +166,42 @@ class LSTM:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--gene_name', help='The name of the gene for the protein family', default='FYN')
-    parser.add_argument('--batch_size', help='Number of sequences per batch', type=int, default=100)
-    parser.add_argument('--num_epochs', help='Number of epochs of training', type=int, default=10)
-    parser.add_argument('--multilayer', help='Use multiple LSTM layers', type=bool, default=False)
-    parser.add_argument('--restore_path', help='Path to restore model, should be of the format '\
-                        '\'year-month-date_hour-min-sec\'', default='')
-    parser.add_argument('--seq_limit', help='If debugging and you want to only use a limited number '\
-                        'of sequences for the sake of time, set this.', type=int, default=0)
-    parser.add_argument('--feature_to_predict', help='Experimental feature to compare mutation'\
-                        'predictions to.', default='')
-    parser.add_argument('--dropout_prob', help='Value for dropout when training. If left unset, there will be'\
-                        'no dropout aka dropout_prob = 0', type=float, default=0.0)
-    parser.add_argument('--attn_length', help='Length of attention, if 0, no attention is used', type=int, default=0)
-    parser.add_argument('--entropy_reg', help='How much entropy regularization to use, if 0 none', type=float, default=0.0)
-    parser.add_argument('--n_hidden', help='Number of hidden nodes per layer', type=int, default=150)
-    parser.add_argument('--n_layers', help='Number of hidden layers', type=int, default=2)
 
-    gene_name = parser.parse_args().gene_name
-    batch_size = parser.parse_args().batch_size
-    num_epochs = parser.parse_args().num_epochs
-    multilayer = parser.parse_args().multilayer
-    restore_path = parser.parse_args().restore_path
-    seq_limit = parser.parse_args().seq_limit
-    feature_to_predict = parser.parse_args().feature_to_predict
-    dropout_prob = parser.parse_args().dropout_prob
-    attn_length = parser.parse_args().attn_length
-    entropy_reg = parser.parse_args().entropy_reg
-    n_hidden = parser.parse_args().n_hidden
-    n_layers = parser.parse_args().n_layers
+    # Data Parameters
+    parser.add_argument('-gene_name', help='The name of the gene for the protein family', default='FYN')
+    parser.add_argument('-seq_limit', help='If debugging and you want to only use a limited number '\
+                        'of sequences for the sake of time, set this.', type=int, default=0)
+
+    # Training Parameters
+    parser.add_argument('-batch_size', help='Number of sequences per batch', type=int, default=128)
+    parser.add_argument('-num_epochs', help='Number of epochs of training', type=int, default=100)
+    parser.add_argument('-restore_path', help='Path to restore model, should be of the format '\
+                        '\'year-month-date_hour-min-sec\'', default='')
+
+    # RNN Architecture Parameters
+    parser.add_argument('-num_hidden', help='Number of hidden nodes per layer', type=int, default=150)
+    parser.add_argument('-num_layers', help='Number of hidden layers. If = 1, this is a normal LSTM ' \
+                        'othersiwe this is the number of stacked LSTM layers', type=int, default=1)
+
+    # Regularization Parameters
+    parser.add_argument('-dropout_prob', help='Value for dropout when training. If left unset, there will be'\
+                        'no dropout aka dropout_prob = 0', type=float, default=0.0)
+    parser.add_argument('-attn_length', help='Length of attention, if 0, no attention is used', type=int, default=0)
+    parser.add_argument('-gradient_limit', help='Max value for a gradient. Values above this get trimmed down'\
+                        ' to this value', type=float, default=5.0)
+    parser.add_argument('-entropy_reg', help='How much entropy regularization to use, if 0 none', type=float, default=0.0)
+    parser.add_argument('-learning_rate', help='Initial learning rate', type=float, default=0.0001)
+
+    # Create dictionary of the parsed args and convert each arg into a local variable
+    locals().update(vars(parser.parse_args()))
 
     # Set run time (or restore run_time from last run)
-    if restore_path:
-        run_time = restore_path
-    else:
-        run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_time = restore_path if restore_path else datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     # Set up logging directories
     log_path = os.path.join('model_logs', gene_name, run_time)
     graph_log_path = os.path.join(log_path, 'graphs')
     checkpoint_log_path = os.path.join(log_path, 'checkpoints')
-
     if not restore_path:
         os.makedirs(log_path)
         os.makedirs(graph_log_path)
@@ -233,33 +211,29 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, filename=os.path.join(log_path, 'logfile.txt'),
                     format='%(asctime)-15s %(message)s')
 
-    # Log the flag values
-    for flag_name, flag_value in vars(parser.parse_args()).iteritems():
-        logging.info("{}: {}".format(flag_name, flag_value))
+    # Log the parameter values
+    for param_name, param_value in vars(parser.parse_args()).iteritems():
+        logging.info("{}: {}".format(param_name, param_value))
 
     print "Getting multiple sequence alignment"
     MSA = MultipleSequenceAlignment(gene_name, run_time=run_time, seq_limit=seq_limit)
 
-    
     data = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='data')
     target = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='target')
     dropout = tf.placeholder_with_default(0.0, shape=(), name='dropout')
     corr_tensor = tf.placeholder(tf.float32, name='spear_corr')
     corr_summ_tensor = tf.summary.scalar('spear_corr', corr_tensor)
 
-    predictor = MutationPrediction(MSA, feature_to_predict)
+    predictor = MutationPrediction(MSA, tools.feature_to_predict[gene_name])
 
     print "Constructing model"
     model = LSTM(data, target, dropout=dropout, attn_length=attn_length, entropy_reg=entropy_reg, \
-            use_multilayer=multilayer, num_hidden=n_hidden, num_layers=n_layers)
+            gradient_limit=gradient_limit, learning_rate=learning_rate, num_hidden=num_hidden, num_layers=num_layers)
 
     writer = tf.summary.FileWriter(graph_log_path)
     sess = tf.Session()
     writer.add_graph(sess.graph)
-
-
     sess.run(tf.global_variables_initializer())
-
 
     if restore_path:
         print "Restoring checkpoint"
