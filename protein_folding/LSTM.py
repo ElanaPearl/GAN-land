@@ -37,8 +37,8 @@ class LSTM:
             self.train_error = tf.summary.scalar('train_error',self.error)
 
         # Note this cross entropy gives you the cross ent FOR EACH SEQ in the batch
-        self.cross_entropy = self.get_cross_entropy(self.target, self.prediction)
-        self.entropy = self.get_cross_entropy(self.prediction, self.prediction)
+        self.cross_entropy = self.get_cross_entropy(self.target, self.logits)
+        self.entropy = self.get_cross_entropy(self.prediction, self.logits)
 
         self.cost = self.get_cost()
         self.optimize, self.gradient_summary = self.get_optimizer()
@@ -78,14 +78,23 @@ class LSTM:
                     sequence_length=self.length,
                     dtype=tf.float32
                 )
+        #print output
 
         # Softmax layer.
         weight, bias = self._weight_and_bias(self._num_hidden, self.alphabet_len)
         # Flatten to apply same weights to all time steps.
         with tf.variable_scope('output_to_prediction'):
-            logits = tf.reshape(output, [-1, self._num_hidden])
-            prediction = tf.nn.softmax(tf.matmul(output, weight) + bias)
+            #print "pre-shape output: ", output
+            output = tf.reshape(output, [-1, self._num_hidden])
+            #print "post-shape output: ", output
+            #print output, weight, bias
+            logits = tf.matmul(output, weight) + bias
+
+            #print "LOGITS"
+            #print logits
+            prediction = tf.nn.softmax(logits)
             prediction = tf.reshape(prediction, [-1, self.max_length, self.alphabet_len])
+            logits = tf.reshape(logits, [-1, self.max_length, self.alphabet_len])
             return logits, prediction
 
 
@@ -126,7 +135,7 @@ class LSTM:
 
 
     def get_cross_entropy(self, p, q):
-        cross_entropy = - p * tf.log(q)
+        cross_entropy = - p * (q - tf.reduce_logsumexp(q, axis=2, keep_dims=True))
         cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=2)
 
         # Mask out elements after the end of the target sequence
@@ -279,7 +288,7 @@ if __name__ == '__main__':
                 # GET TEST ERROR
                 test_data, test_target = MSA.next_batch(batch_size, test=True)
                 test_err_summary, test_err, test_pred = sess.run([model.test_error, model.error, model.prediction], \
-                                                        {data: test_data, target: test_target, dropout: 0.0})
+                                                        {data: test_data, target: test_target})
 
                 logging.info("Batch: {}, Error: {}".format(i, test_err))
 
@@ -309,7 +318,7 @@ if __name__ == '__main__':
             writer.add_summary(gradient_summary, epoch*num_batches_per_epoch + i)
 
         test_data, test_target = MSA.next_batch(batch_size, test=True)
-        logging.info("Error: {}".format(sess.run(model.error, {data: test_data, target: test_target, dropout: 0.0})))
+        logging.info("Error: {}".format(sess.run(model.error, {data: test_data, target: test_target})))
 
 
         # The number of batches of a given epoch that we already trained is only relevant 
