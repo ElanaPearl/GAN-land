@@ -1,4 +1,5 @@
 from datetime import datetime
+import cPickle as pickle
 import tensorflow as tf
 from math import ceil
 import numpy as np
@@ -37,10 +38,12 @@ class LSTM:
 
         # Note this cross entropy gives you the cross ent FOR EACH SEQ in the batch
         self.cross_entropy = self.get_cross_entropy(self.target, self.logits)
-        self.entropy = self.get_cross_entropy(self.prediction, self.logits)
+        self.entropy = self.get_cross_entropy(self.prediction, self.logits, ignore_end_token=True)
 
-        self.cost = self.get_cost(entropy_reg)
-        self.optimize, self.gradient_summary = self.get_optimizer(gradient_limit, learning_rate)
+        self.cost, cross_ent_summary, ent_summary = self.get_cost(entropy_reg)
+        self.optimize, gradient_summary = self.get_optimizer(gradient_limit, learning_rate)
+
+        self.train_summaries = (gradient_summary, cross_ent_summary, ent_summary)
 
 
     def get_length(self):
@@ -98,7 +101,9 @@ class LSTM:
         batch_cross_ent = tf.reduce_mean(self.cross_entropy)
         batch_entropy = tf.reduce_mean(self.entropy)
 
-        return batch_cross_ent - batch_entropy * entropy_reg
+        return batch_cross_ent - batch_entropy * entropy_reg, \
+                tf.summary.scalar("cross_entropy_err", batch_cross_ent), \
+                tf.summary.scalar("entropy_err", batch_entropy)
 
 
     def get_optimizer(self, gradient_limit, learning_rate):
@@ -128,12 +133,17 @@ class LSTM:
             return tf.reduce_mean(mistakes)
 
 
-    def get_cross_entropy(self, p, q):
+    def get_cross_entropy(self, p, q, ignore_end_token=False):
+        # If include_end_token then you will not calculate the entropy of the end token
+        if ignore_end_token:
+            p = p[:,:,:-1]
+            q = q[:,:,:-1]
+
         cross_entropy = - p * (q - tf.reduce_logsumexp(q, axis=2, keep_dims=True))
         cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=2)
 
         # Mask out elements after the end of the target sequence
-        mask = tf.sign(tf.reduce_max(tf.abs(p), reduction_indices=2))
+        mask = tf.sign(tf.reduce_max(tf.abs(self.target), reduction_indices=2))
         cross_entropy *= mask
 
         # Average across each seq to get one value per seq
@@ -251,6 +261,8 @@ if __name__ == '__main__':
 
     num_batches_per_epoch = int(ceil(float(MSA.train_size) / batch_size))
 
+    LAST_ERROR = 10000
+
     print "Starting training"
     for epoch in range(pretrained_epochs, num_epochs):
         logging.info("Epoch: {}".format(epoch))
@@ -283,18 +295,27 @@ if __name__ == '__main__':
                 #sample_summary = sess.run(model.sample_seq_summary, {seq_placeholder: seq_sample})
                 #writer.add_summary(sample_summary, epoch*num_batches_per_epoch + i)
 
-
             batch_data, batch_target = MSA.next_batch(batch_size)
 
-            _, gradient_summary, train_err_summary = sess.run([model.optimize, model.gradient_summary, model.train_error], \
-                                                              {data: batch_data, target: batch_target, dropout: dropout_prob})
+            _, train_summaries, train_err_summary, train_err = sess.run([model.optimize, model.train_summaries, model.train_error, model.error], \
+                                                               {data: batch_data, target: batch_target, dropout: dropout_prob})
+
+            for summary in train_summaries:
+                writer.add_summary(summary, epoch*num_batches_per_epoch + i)
+
             writer.add_summary(train_err_summary, epoch*num_batches_per_epoch + i)
-            writer.add_summary(gradient_summary, epoch*num_batches_per_epoch + i)
+
+            if train_err >= 1 + LAST_ERROR:
+                logging.info("{}: err increaed by {}".format(epoch*num_batches_per_epoch + i, train_err-LAST_ERROR))
+                with open(os.path.join(log_path, 'batch_{}.pkl'.format(epoch*num_batches_per_epoch + i)), 'w'):
+                    pickle.dump(batch_data, f)
+
+            LAST_ERROR = train_err
 
         test_data, test_target = MSA.next_batch(batch_size, test=True)
         logging.info("Error: {}".format(sess.run(model.error, {data: test_data, target: test_target})))
 
 
-        # The number of batches of a given epoch that we already trained is only relevant 
+        # The number of batches of a given epoch that we already trained is only relevant
         # to the first epoch we train after we restore the model
         pretrained_batches = 0
