@@ -179,6 +179,7 @@ if __name__ == '__main__':
 
     # Data Parameters
     parser.add_argument('-gene_name', help='The name of the gene for the protein family', default='FYN')
+    parser.add_argument('-use_full_seqs', help='Use full sequences from online?', action='store_true')
     parser.add_argument('-seq_limit', help='If debugging and you want to only use a limited number '\
                         'of sequences for the sake of time, set this.', type=int, default=0)
 
@@ -226,7 +227,7 @@ if __name__ == '__main__':
         logging.info("{}: {}".format(param_name, param_value))
 
     print "Getting multiple sequence alignment"
-    MSA = MultipleSequenceAlignment(gene_name, run_time=run_time, seq_limit=seq_limit)
+    MSA = MultipleSequenceAlignment(gene_name, run_time=run_time, seq_limit=seq_limit, use_full_seqs=use_full_seqs)
 
     data = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='data')
     target = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='target')

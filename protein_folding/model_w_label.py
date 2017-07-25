@@ -1,5 +1,6 @@
 from sklearn.cluster import KMeans
 from datetime import datetime
+import cPickle as pickle
 import tensorflow as tf
 import numpy as np
 import logging
@@ -10,38 +11,58 @@ import tools
 
 
 class MultipleSequenceAlignment:
-    def __init__(self, gene_name, run_time, seq_limit=None):
-
+    def __init__(self, gene_name, run_time, use_full_seqs=None, seq_limit=None):
+        self.gene_name = gene_name
         filename = os.path.join('alignments', tools.get_alignment_filename(gene_name))
         make_path = lambda x: os.path.join('model_logs', gene_name, x)
 
         logging.basicConfig(level=logging.INFO, filename=os.path.join(make_path(run_time), 'logfile.txt'),
                     format='%(asctime)-15s %(message)s')
 
-        self.seq_limit = seq_limit
-
         # READ IN DATA
         self.full_ref_seq = None
         self.trimmed_ref_seq = None
-        self.seqs = self._read_data(filename)
+        self.seqs = self._read_data(filename, seq_limit)
 
         # GET METADATA ABOUT SEQUENCES
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
         self.num_seqs = len(self.seqs)
 
         # GET WEIGHTS FOR SEQUENCES
-        seq_log_path = make_path('seq_weights.pkl')
-        
+        seq_log_path = make_path('seq_weights.pkl')   
         logging.info("CALCULATING SEQ WEIGHTS")
-        #self.seq_weights = self.calc_seq_weights()
-        #logging.info("SAVING SEQ WEIGHTS")
-        #with open(seq_log_path, 'w') as f:
-        #    pickle.dump(self.seq_weights, f)
         self.seq_weights = tools.lazy_calculate(self.calc_seq_weights, seq_log_path)
 
         # GET CLUSTERS FOR SEQUENCES
         cluster_path = make_path('clusters_{}.pkl'.format(tools.n_clusters))
         self.seq_clusters = tools.lazy_calculate(self.cluster_seqs, cluster_path)
+
+        # IF USE FULL SEQS
+        if use_full_seqs:
+            print "PRE AVG LEN: ", sum(len(seq) for seq in self.seqs.values()) / float(len(self.seqs))
+            
+            with open(make_path('full_seqs.pkl')) as f:
+                full_seq_dict = pickle.load(f)
+
+            # REMOVE SEQS THAT HAVE NON ALPHABET CHARS IN FULL VERSION (AND THUS WERE TRIMMED OUT)
+            seq_mask = [seq_name.split('/')[0].split('|')[-1] in full_seq_dict for seq_name in self.seqs.keys()]
+            print len(self.seq_weights), len(self.seq_clusters)
+            self.seq_weights = self.seq_weights[seq_mask]
+            self.seq_clusters = self.seq_clusters[seq_mask]
+            print len(self.seq_weights), len(self.seq_clusters)
+
+            for seq_name in self.seqs.keys():
+                trim_seq_name = seq_name.split('/')[0].split('|')[-1]
+                del self.seqs[seq_name]
+                if trim_seq_name in full_seq_dict:
+                    self.seqs[seq_name] = full_seq_dict[trim_seq_name]
+
+            print "POST AVG LEN: ", sum(len(seq) for seq in self.seqs.values()) / float(len(self.seqs))
+
+            # ADJUST META INFO
+            self.max_seq_len = max(len(seq) for seq in self.seqs.values())
+            self.num_seqs = len(self.seqs)
+
 
         # SELECT TEST AND TRAIN SET
         test_id_path = make_path(os.path.join(run_time, 'test_ids.pkl'))
@@ -63,7 +84,7 @@ class MultipleSequenceAlignment:
 
         # GET DIST OF FIRST ELEMENT OF SEQS (for generation purposes)
         seed_weight_path = make_path('seed_weights.pkl')
-        self.seed_weights = tools.lazy_calculate(self.calc_seed_weights, seed_weight_path)
+        self.seed_weights = self.calc_seed_weights()
 
 
     def choose_test_set(self):
@@ -91,7 +112,10 @@ class MultipleSequenceAlignment:
         print "CALCULATING SEED WEIGHTS"
         first_vals = dict(zip(list(tools.alphabet),np.zeros(tools.alphabet_len)))
         for i, v in enumerate(self.seqs.values()):
-            first_vals[v[0]] += self.seq_weights[i]
+            try:
+                first_vals[v[0]] += self.seq_weights[i]
+            except:
+                import pdb; pdb.set_trace()
 
         norm_const = sum(first_vals.values())
         first_vals = {k: v / norm_const for k, v in first_vals.iteritems()}
@@ -234,7 +258,7 @@ class MultipleSequenceAlignment:
                 self.trimmed_ref_seq = cleaned_seq
 
 
-    def _read_data(self, filename):
+    def _read_data(self, filename, seq_limit=None):
         """ Converts data into
 
         Reads in the a2m alignment file an converts it into a dictionary where
@@ -255,7 +279,7 @@ class MultipleSequenceAlignment:
                     if current_id is not None:
                         self._add_sequence(current_id, current_sequence)
 
-                        if self.seq_limit and len(self.seqs) == self.seq_limit:
+                        if seq_limit and len(self.seqs) == seq_limit:
                             return self.seqs
 
                     current_id = line.rstrip()[1:]
