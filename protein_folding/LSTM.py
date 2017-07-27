@@ -13,13 +13,12 @@ import tools
 
 
 class LSTM:
-    def __init__(self, data, target, dropout, attn_length, entropy_reg, gradient_limit, learning_rate, \
-                num_hidden, num_layers):
+    def __init__(self, data, target, dropout, attn_length, entropy_reg, gradient_limit,
+                num_hidden, num_layers, init_learning_rate, decay_steps, decay_rate):
         self.data = data
         self.target = target
         self.dropout = dropout
         self.attn_length = attn_length
-        self.learning_rate = learning_rate
 
         self.max_length = int(self.target.get_shape()[1])
         self.alphabet_len = int(self.target.get_shape()[2])
@@ -41,7 +40,10 @@ class LSTM:
         self.entropy = self.get_cross_entropy(self.prediction, self.logits, ignore_end_token=True)
 
         self.cost, cross_ent_summary, ent_summary = self.get_cost(entropy_reg)
-        self.optimize, gradient_summary = self.get_optimizer(gradient_limit, learning_rate)
+        self.optimize, gradient_summary = self.get_optimizer(gradient_limit,
+                                                            init_learning_rate,
+                                                            decay_steps,
+                                                            decay_rate)
 
         self.train_summaries = (gradient_summary, cross_ent_summary, ent_summary)
 
@@ -106,7 +108,15 @@ class LSTM:
                 tf.summary.scalar("entropy_err", batch_entropy)
 
 
-    def get_optimizer(self, gradient_limit, learning_rate):
+    def get_optimizer(self, gradient_limit, init_learning_rate, decay_steps, decay_rate):
+        global_step = tf.Variable(0, trainable=False)
+
+        learning_rate = tf.train.exponential_decay(init_learning_rate,
+                                                    global_step=global_step,
+                                                    decay_steps=decay_steps,
+                                                    decay_rate=decay_rate,
+                                                    staircase=True)
+
         optimizer = tf.train.AdamOptimizer(learning_rate)
         with tf.name_scope('minimize_cost'):
             gvs = optimizer.compute_gradients(self.cost)
@@ -114,7 +124,7 @@ class LSTM:
             clip_norm = gradient_limit
             clipped_grads, global_norm = tf.clip_by_global_norm(grads, clip_norm)
             clipped_gvs = zip(clipped_grads, gvars)
-            return optimizer.apply_gradients(clipped_gvs), tf.summary.scalar("GradientNorm", global_norm) # collections=["train_batch", "train_dense"]
+            return optimizer.apply_gradients(clipped_gvs, global_step=global_step), tf.summary.scalar("GradientNorm", global_norm) # collections=["train_batch", "train_dense"]
 
 
     def get_error(self):
@@ -201,7 +211,9 @@ if __name__ == '__main__':
     parser.add_argument('-gradient_limit', help='Max value for a gradient. Values above this get trimmed down'\
                         ' to this value', type=float, default=5.0)
     parser.add_argument('-entropy_reg', help='How much entropy regularization to use, if 0 none', type=float, default=0.0)
-    parser.add_argument('-learning_rate', help='Initial learning rate', type=float, default=0.0001)
+    parser.add_argument('-init_learning_rate', help='Initial learning rate', type=float, default=0.01)
+    parser.add_argument('-decay_steps', help='Initial learning rate', type=int, default=100)
+    parser.add_argument('-decay_rate', help='Initial learning rate', type=float, default=0.9)
 
     # Create dictionary of the parsed args and convert each arg into a local variable
     locals().update(vars(parser.parse_args()))
@@ -213,10 +225,13 @@ if __name__ == '__main__':
     log_path = os.path.join('model_logs', gene_name, run_time)
     graph_log_path = os.path.join(log_path, 'graphs')
     checkpoint_log_path = os.path.join(log_path, 'checkpoints')
+    mutant_pred_path = os.path.join(log_path, 'mutant_preds')
+
     if not restore_path:
         os.makedirs(log_path)
         os.makedirs(graph_log_path)
         os.makedirs(checkpoint_log_path)
+        os.makedirs(mutant_pred_path)
 
     # Set up logging file
     logging.basicConfig(level=logging.INFO, filename=os.path.join(log_path, 'logfile.txt'),
@@ -238,8 +253,10 @@ if __name__ == '__main__':
     predictor = MutationPrediction(MSA, tools.feature_to_predict[gene_name])
 
     print "Constructing model"
-    model = LSTM(data, target, dropout=dropout, attn_length=attn_length, entropy_reg=entropy_reg, \
-            gradient_limit=gradient_limit, learning_rate=learning_rate, num_hidden=num_hidden, num_layers=num_layers)
+    model = LSTM(data, target, dropout=dropout, attn_length=attn_length,
+                 entropy_reg=entropy_reg, gradient_limit=gradient_limit,
+                 init_learning_rate=init_learning_rate, decay_steps=decay_steps,
+                 decay_rate=decay_rate, num_hidden=num_hidden, num_layers=num_layers)
 
     writer = tf.summary.FileWriter(graph_log_path)
     sess = tf.Session()
@@ -262,15 +279,20 @@ if __name__ == '__main__':
 
     num_batches_per_epoch = int(ceil(float(MSA.train_size) / batch_size))
 
-    LAST_ERROR = 10000
+    LAST_ERROR = 10000.0
+    MAX_DELTA_ERROR = 0.0
 
     print "Starting training"
     for epoch in range(pretrained_epochs, num_epochs):
         logging.info("Epoch: {}".format(epoch))
-        
+
         for i in range(pretrained_batches, num_batches_per_epoch):
             if i % batch_size == 0:
                 saver.save(sess, os.path.join(checkpoint_log_path,'model_{}_{}'.format(epoch,i)))
+
+                # PRINT MAX ERROR
+                logging.info("MAX DELTA ERROR: {}".format(MAX_DELTA_ERROR))
+                print "MAX DELTA ERROR: ", MAX_DELTA_ERROR
 
                 # GET TEST ERROR
                 test_data, test_target = MSA.next_batch(batch_size, test=True)
@@ -280,18 +302,22 @@ if __name__ == '__main__':
                 logging.info("Batch: {}, Error: {}".format(i, test_err))
 
                 writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
-                
+
                 logging.info("target: {}".format(MSA.one_hot_to_str(test_target[0])))
                 logging.info("pred:   {}".format(MSA.one_hot_to_str(test_pred[0])))
 
                 # GENERATE RANDOM SAMPLE
                 seq_sample = model.generate_seq(sess, MSA.seed_weights)
                 logging.info("gen:    {}".format(seq_sample))
-                
+
                 # COMPARE PREDICTIONS TO EXPERIMENTAL RESULTS
-                _, spear_corr = predictor.predict(sess, model, data, target)
+                spear_corr = predictor.corr(sess, model, data, target)
                 corr_summary = sess.run(corr_summ_tensor, {corr_tensor: spear_corr})
                 writer.add_summary(corr_summary, epoch*num_batches_per_epoch + i)
+
+                # MAKE PLOT OF ALL SINGLE MUTATIONS
+                predictor.plot_single_mutants(sess, model, data, target,
+                                              os.path.join(mutant_pred_path, '{}.png'.format(epoch*num_batches_per_epoch + i)))
 
                 #sample_summary = sess.run(model.sample_seq_summary, {seq_placeholder: seq_sample})
                 #writer.add_summary(sample_summary, epoch*num_batches_per_epoch + i)
@@ -306,9 +332,12 @@ if __name__ == '__main__':
 
             writer.add_summary(train_err_summary, epoch*num_batches_per_epoch + i)
 
-            if train_err >= 1 + LAST_ERROR:
+            if train_err - LAST_ERROR > MAX_DELTA_ERROR:
+                MAX_DELTA_ERROR = train_err - LAST_ERROR
+
+            if train_err >= .1 + LAST_ERROR:
                 logging.info("{}: err increaed by {}".format(epoch*num_batches_per_epoch + i, train_err-LAST_ERROR))
-                with open(os.path.join(log_path, 'batch_{}.pkl'.format(epoch*num_batches_per_epoch + i)), 'w'):
+                with open(os.path.join(log_path, 'batch_{}.pkl'.format(epoch*num_batches_per_epoch + i)), 'w') as f:
                     pickle.dump(batch_data, f)
 
             LAST_ERROR = train_err
