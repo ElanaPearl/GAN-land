@@ -1,10 +1,18 @@
 from scipy.stats import spearmanr
+import matplotlib
+# Force matplotlib to not use any Xwindows backend.
+matplotlib.use('Agg')
+
+import matplotlib.pyplot as plt
+
 import tensorflow as tf
 import pandas as pd
 import numpy as np
 import argparse
 
 import tools
+
+
 
 
 class MutationPrediction:
@@ -21,6 +29,9 @@ class MutationPrediction:
         self.mutants = experimental_res['mutant']
 
         self.mutated_d, self.mutated_t = self.all_measured_mutations()
+
+        self.single_mutated_d, self.single_mutated_t = self.all_single_mutations()
+
 
     @staticmethod
     def extract_mutations(mutation_string, offset=0):
@@ -91,16 +102,73 @@ class MutationPrediction:
 
         return mutated_d, mutated_t
 
-    def predict(self, sess, model, data, target):
+
+    def predict_mutations(self, sess, model, data, target, mutated_d, mutated_t):
         # TODO: maybe just re-implement this in tensorflow (?)
         wildtype_seed_prob = [self.MSA.seed_weights[i] for i in np.argmax(self.wildtype_d[:,0,:],1)]
-        mutated_seed_prob = [self.MSA.seed_weights[i] for i in np.argmax(self.mutated_d[:,0,:],1)]
+        mutated_seed_prob = [self.MSA.seed_weights[i] for i in np.argmax(mutated_d[:,0,:],1)]
 
         wildtype_prob = -sess.run(model.cross_entropy, {data: self.wildtype_d, target: self.wildtype_t})
-        mutated_prob = -sess.run(model.cross_entropy, {data: self.mutated_d, target: self.mutated_t})
+        mutated_prob = -sess.run(model.cross_entropy, {data: mutated_d, target: mutated_t})
 
         mutation_preds = (mutated_prob + mutated_seed_prob) - (wildtype_prob + wildtype_seed_prob)
 
+        return mutation_preds
+
+
+    def corr(self, sess, model, data, target):
+        mutation_preds = self.predict_mutations(sess, model, data, target, self.mutated_d, self.mutated_t)
         assert(len(self.measured) == len(mutation_preds))
 
-        return mutation_preds, spearmanr(self.measured, mutation_preds).correlation
+        return spearmanr(self.measured, mutation_preds).correlation
+
+
+    def plot_single_mutants(self, sess, model, data, target, fn):
+        mutation_preds = self.predict_mutations(sess, model, data, target, self.single_mutated_d, self.single_mutated_t)
+        mutation_preds = np.reshape(mutation_preds,(len(self.MSA.trimmed_ref_seq), tools.alphabet_len)).T
+
+        # Plot it out
+        fig, ax = plt.subplots()
+        #heatmap = ax.pcolor(mutation_preds, cmap="Blues_r", vmin=-1.5, vmax=0.0)
+        heatmap = ax.pcolor(mutation_preds, cmap="Blues_r")
+
+        # Format
+        fig = plt.gcf()
+        fig.set_size_inches(18,4)
+
+        # turn off the frame
+        ax.set_frame_on(False)
+
+        # put the major ticks at the middle of each cell
+        ax.set_yticks(np.arange(tools.alphabet_len)+0.5, minor=False)
+        ax.set_xticks(np.arange(len(self.MSA.trimmed_ref_seq))+0.5, minor=False)
+
+        # Set (0,0) as the top left
+        ax.invert_yaxis()
+        ax.xaxis.tick_top()
+
+        ax.set_xticklabels(list(self.MSA.trimmed_ref_seq), minor=False) 
+        ax.set_yticklabels(list(tools.alphabet), minor=False)
+
+        # Rotate the xticks
+        plt.xticks(rotation=90)
+
+        # Turn off all the ticks
+        for t in plt.gca().xaxis.get_major_ticks(): 
+            t.tick1On = False 
+            t.tick2On = False 
+        for t in plt.gca().yaxis.get_major_ticks(): 
+            t.tick1On = False 
+            t.tick2On = False  
+        
+        wt_idx = np.array([tools.alphabet_map[x] for x in self.MSA.trimmed_ref_seq])
+
+        fig.colorbar(heatmap)
+
+        ax.scatter(np.arange(mutation_preds.shape[1])+0.5, wt_idx+0.5, color='m', s=3)
+
+        plt.savefig(fn)
+        plt.clf()
+
+
+
