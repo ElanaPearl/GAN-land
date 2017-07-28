@@ -11,6 +11,7 @@ from model_w_label import MultipleSequenceAlignment
 from predict import MutationPrediction
 import tools
 
+from tensorflow.python import debug as tf_debug
 
 class LSTM:
     def __init__(self, data, target, dropout, attn_length, entropy_reg, gradient_limit,
@@ -40,12 +41,12 @@ class LSTM:
         self.entropy = self.get_cross_entropy(self.prediction, self.logits, ignore_end_token=True)
 
         self.cost, cross_ent_summary, ent_summary = self.get_cost(entropy_reg)
-        self.optimize, gradient_summary = self.get_optimizer(gradient_limit,
+        self.optimize, gradient_summary, unnorm_grad_summary = self.get_optimizer(gradient_limit,
                                                             init_learning_rate,
                                                             decay_steps,
                                                             decay_rate)
 
-        self.train_summaries = (gradient_summary, cross_ent_summary, ent_summary)
+        self.train_summaries = (gradient_summary, unnorm_grad_summary, cross_ent_summary, ent_summary)
 
 
     def get_length(self):
@@ -111,21 +112,35 @@ class LSTM:
     def get_optimizer(self, gradient_limit, init_learning_rate, decay_steps, decay_rate):
         global_step = tf.Variable(0, trainable=False)
 
+        """
         learning_rate = tf.train.exponential_decay(init_learning_rate,
                                                     global_step=global_step,
                                                     decay_steps=decay_steps,
                                                     decay_rate=decay_rate,
                                                     staircase=True)
+        """
 
-        optimizer = tf.train.AdamOptimizer(learning_rate)
+        optimizer = tf.train.AdamOptimizer(init_learning_rate)
         with tf.name_scope('minimize_cost'):
             gvs = optimizer.compute_gradients(self.cost)
             grads, gvars = list(zip(*gvs)[0]), list(zip(*gvs)[1])
+            
+            # THIS IS FOR CLIPPING BY GLOBAL NORM
             clip_norm = gradient_limit
-            clipped_grads, global_norm = tf.clip_by_global_norm(grads, clip_norm)
+            stable_global_norm = tf.global_norm(grads) + .00001
+            #stable_global_norm = tf.global_norm(grads)
+            clipped_grads, global_norm = tf.clip_by_global_norm(grads, clip_norm, use_norm=stable_global_norm)
             clipped_gvs = zip(clipped_grads, gvars)
-            return optimizer.apply_gradients(clipped_gvs, global_step=global_step), tf.summary.scalar("GradientNorm", global_norm) # collections=["train_batch", "train_dense"]
-
+            return optimizer.apply_gradients(clipped_gvs, global_step=global_step), \
+                 tf.summary.scalar("GradientNorm", tf.global_norm(clipped_grads)), \
+                 tf.summary.scalar("GradientNotNorm", stable_global_norm)
+            """
+            clipped_grads = [tf.clip_by_value(grad, -gradient_limit, gradient_limit, name='clipped_grads') for grad in grads]
+            clipped_gvs = zip(clipped_grads, gvars)
+            return optimizer.apply_gradients(clipped_gvs, global_step=global_step), \
+                 tf.summary.scalar("GradientNorm", tf.global_norm(clipped_grads)), \
+                 tf.summary.scalar("GradientNotNorm", tf.global_norm(grads))
+            """
 
     def get_error(self):
         with tf.variable_scope('compute_all_errors'):
@@ -148,6 +163,8 @@ class LSTM:
         if ignore_end_token:
             p = p[:,:,:-1]
             q = q[:,:,:-1]
+
+
 
         cross_entropy = - p * (q - tf.reduce_logsumexp(q, axis=2, keep_dims=True))
         cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=2)
@@ -198,6 +215,7 @@ if __name__ == '__main__':
     parser.add_argument('-num_epochs', help='Number of epochs of training', type=int, default=100)
     parser.add_argument('-restore_path', help='Path to restore model, should be of the format '\
                         '\'year-month-date_hour-min-sec\'', default='')
+    parser.add_argument('-debug', help='Use tf_debug', action='store_true')
 
     # RNN Architecture Parameters
     parser.add_argument('-num_hidden', help='Number of hidden nodes per layer', type=int, default=150)
@@ -259,7 +277,13 @@ if __name__ == '__main__':
                  decay_rate=decay_rate, num_hidden=num_hidden, num_layers=num_layers)
 
     writer = tf.summary.FileWriter(graph_log_path)
+
     sess = tf.Session()
+    if debug:
+        sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        sess.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
+
+
     writer.add_graph(sess.graph)
     sess.run(tf.global_variables_initializer())
 
