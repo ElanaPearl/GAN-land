@@ -46,7 +46,8 @@ class LSTM:
                                                             decay_steps,
                                                             decay_rate)
 
-        self.train_summaries = (gradient_summary, unnorm_grad_summary, cross_ent_summary, ent_summary)
+        self.train_summaries = [tf.summary.histogram(v.name, v) for v in tf.trainable_variables()]
+        self.train_summaries += [gradient_summary, unnorm_grad_summary, cross_ent_summary, ent_summary]
 
 
     def get_length(self):
@@ -96,6 +97,11 @@ class LSTM:
             prediction = tf.nn.softmax(logits)
             prediction = tf.reshape(prediction, [-1, self.max_length, self.alphabet_len])
             logits = tf.reshape(logits, [-1, self.max_length, self.alphabet_len])
+
+
+            # CLIP PREDICTIONS
+            # RENOTMALIZE INTO NEW_PREDS
+            # TAKE LOG AND TURN INTO LOGITS
             return logits, prediction
 
 
@@ -112,15 +118,15 @@ class LSTM:
     def get_optimizer(self, gradient_limit, init_learning_rate, decay_steps, decay_rate):
         global_step = tf.Variable(0, trainable=False)
 
-        """
+        
         learning_rate = tf.train.exponential_decay(init_learning_rate,
                                                     global_step=global_step,
                                                     decay_steps=decay_steps,
                                                     decay_rate=decay_rate,
                                                     staircase=True)
-        """
+        
 
-        optimizer = tf.train.AdamOptimizer(init_learning_rate)
+        optimizer = tf.train.AdamOptimizer(learning_rate)
         with tf.name_scope('minimize_cost'):
             gvs = optimizer.compute_gradients(self.cost)
             grads, gvars = list(zip(*gvs)[0]), list(zip(*gvs)[1])
@@ -233,6 +239,9 @@ if __name__ == '__main__':
     parser.add_argument('-decay_steps', help='Initial learning rate', type=int, default=100)
     parser.add_argument('-decay_rate', help='Initial learning rate', type=float, default=0.9)
 
+    # NOTES TO SELF:
+    parser.add_argument('-note', help='Just 4 u', default='')
+
     # Create dictionary of the parsed args and convert each arg into a local variable
     locals().update(vars(parser.parse_args()))
 
@@ -307,6 +316,10 @@ if __name__ == '__main__':
     MAX_DELTA_ERROR = 0.0
 
     print "Starting training"
+
+    # TODO: DELETE THIS!!!
+    #batch_data, batch_target = MSA.next_batch(batch_size)
+
     for epoch in range(pretrained_epochs, num_epochs):
         logging.info("Epoch: {}".format(epoch))
 
@@ -335,13 +348,19 @@ if __name__ == '__main__':
                 logging.info("gen:    {}".format(seq_sample))
 
                 # COMPARE PREDICTIONS TO EXPERIMENTAL RESULTS
-                spear_corr = predictor.corr(sess, model, data, target)
+                mutant_preds, spear_corr = predictor.corr(sess, model, data, target)
                 corr_summary = sess.run(corr_summ_tensor, {corr_tensor: spear_corr})
                 writer.add_summary(corr_summary, epoch*num_batches_per_epoch + i)
 
+                with open(os.path.join(mutant_pred_path, '{}.pkl'.format(epoch*num_batches_per_epoch + i)), 'w') as f:
+                    pickle.dump(mutant_preds, f)
+
+
                 # MAKE PLOT OF ALL SINGLE MUTATIONS
-                predictor.plot_single_mutants(sess, model, data, target,
+                single_mutant_preds = predictor.plot_single_mutants(sess, model, data, target,
                                               os.path.join(mutant_pred_path, '{}.png'.format(epoch*num_batches_per_epoch + i)))
+
+
 
                 #sample_summary = sess.run(model.sample_seq_summary, {seq_placeholder: seq_sample})
                 #writer.add_summary(sample_summary, epoch*num_batches_per_epoch + i)
