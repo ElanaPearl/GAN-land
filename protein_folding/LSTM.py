@@ -14,7 +14,7 @@ import tools
 from tensorflow.python import debug as tf_debug
 
 class LSTM:
-    def __init__(self, data, target, dropout, attn_length, entropy_reg, gradient_limit,
+    def __init__(self, data, target, dropout, attn_length, entropy_reg, lambda_l2_reg, gradient_limit,
                 num_hidden, num_layers, init_learning_rate, decay_steps, decay_rate):
         self.data = data
         self.target = target
@@ -40,7 +40,7 @@ class LSTM:
         self.cross_entropy = self.get_cross_entropy(self.target, self.logits)
         self.entropy = self.get_cross_entropy(self.prediction, self.logits, ignore_end_token=True)
 
-        self.cost, cross_ent_summary, ent_summary = self.get_cost(entropy_reg)
+        self.cost, cross_ent_summary, ent_summary = self.get_cost(entropy_reg, lambda_l2_reg)
         self.optimize, gradient_summary, unnorm_grad_summary = self.get_optimizer(gradient_limit,
                                                             init_learning_rate,
                                                             decay_steps,
@@ -99,18 +99,31 @@ class LSTM:
             logits = tf.reshape(logits, [-1, self.max_length, self.alphabet_len])
 
 
-            # CLIP PREDICTIONS
-            # RENOTMALIZE INTO NEW_PREDS
-            # TAKE LOG AND TURN INTO LOGITS
+            # Clip predictions
+            prediction = tf.clip_by_value(prediction, 1e-5, 1)
+
+            # Renormalize predictions
+            prediction = tf.divide(prediction, tf.reshape(tf.reduce_sum(prediction, 2), [-1, self.max_length, 1]))
+
+            # Recompute logits from predictions
+            logits = tf.log(prediction)
+
             return logits, prediction
 
 
-    def get_cost(self, entropy_reg):
+    def get_cost(self, entropy_reg, lambda_l2_reg):
         # Get the avg entropy for the whole batch
         batch_cross_ent = tf.reduce_mean(self.cross_entropy)
         batch_entropy = tf.reduce_mean(self.entropy)
 
-        return batch_cross_ent - batch_entropy * entropy_reg, \
+
+        loss = batch_cross_ent - batch_entropy * entropy_reg
+        l2 = lambda_l2_reg * sum(
+            tf.nn.l2_loss(tf_var)
+                for tf_var in tf.trainable_variables())
+        loss += l2
+
+        return loss, \
                 tf.summary.scalar("cross_entropy_err", batch_cross_ent), \
                 tf.summary.scalar("entropy_err", batch_entropy)
 
@@ -235,6 +248,7 @@ if __name__ == '__main__':
     parser.add_argument('-gradient_limit', help='Max value for a gradient. Values above this get trimmed down'\
                         ' to this value', type=float, default=5.0)
     parser.add_argument('-entropy_reg', help='How much entropy regularization to use, if 0 none', type=float, default=0.0)
+    parser.add_argument('-lambda_l2_reg', help="How much l2 regularization to use on the weights, if 0 none", type=float, default=0.0)
     parser.add_argument('-init_learning_rate', help='Initial learning rate', type=float, default=0.01)
     parser.add_argument('-decay_steps', help='Initial learning rate', type=int, default=100)
     parser.add_argument('-decay_rate', help='Initial learning rate', type=float, default=0.9)
@@ -283,7 +297,8 @@ if __name__ == '__main__':
     model = LSTM(data, target, dropout=dropout, attn_length=attn_length,
                  entropy_reg=entropy_reg, gradient_limit=gradient_limit,
                  init_learning_rate=init_learning_rate, decay_steps=decay_steps,
-                 decay_rate=decay_rate, num_hidden=num_hidden, num_layers=num_layers)
+                 decay_rate=decay_rate, num_hidden=num_hidden, num_layers=num_layers,
+                 lambda_l2_reg=lambda_l2_reg)
 
     writer = tf.summary.FileWriter(graph_log_path)
 
