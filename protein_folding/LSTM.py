@@ -15,7 +15,7 @@ from tensorflow.python import debug as tf_debug
 
 class LSTM:
     def __init__(self, data, target, dropout, attn_length, entropy_reg, lambda_l2_reg, gradient_limit,
-                num_hidden, num_layers, init_learning_rate, decay_steps, decay_rate):
+                num_hidden, num_layers, init_learning_rate, decay_steps, decay_rate, mlp_h1_size, mlp_h2_size):
         self.data = data
         self.target = target
         self.dropout = dropout
@@ -28,6 +28,8 @@ class LSTM:
         self._num_layers = num_layers
         self.length = self.get_length()
 
+        self.mlp_h1_size = mlp_h1_size
+        self.mlp_h2_size = mlp_h2_size
 
         with tf.variable_scope('prediction'):
             self.logits, self.prediction = self.get_prediction()
@@ -85,20 +87,17 @@ class LSTM:
                     sequence_length=self.length,
                     dtype=tf.float32
                 )
+        output = tf.reshape(output, [-1, self._num_hidden])
 
-        # Softmax layer
-        weight = tf.get_variable(name='weight', shape=[self._num_hidden, self.alphabet_len], initializer=tf.truncated_normal_initializer(stddev=0.01))
-        bias = tf.get_variable(name='bias', shape=[self.alphabet_len], initializer=tf.constant_initializer(0.1))
+        logits = self.multilayer_perceptron(output, self._num_hidden, self.mlp_h1_size, self.mlp_h2_size, self.alphabet_len)
 
         # Flatten to apply same weights to all time steps
-        with tf.variable_scope('output_to_prediction'):
-            output = tf.reshape(output, [-1, self._num_hidden])
-            logits = tf.matmul(output, weight) + bias
+        with tf.variable_scope('softmax_logits'):  
             prediction = tf.nn.softmax(logits)
             prediction = tf.reshape(prediction, [-1, self.max_length, self.alphabet_len])
             logits = tf.reshape(logits, [-1, self.max_length, self.alphabet_len])
 
-
+        with tf.variable_scope('clip_predictions'):
             # Clip predictions
             prediction = tf.clip_by_value(prediction, 1e-5, 1)
 
@@ -108,7 +107,38 @@ class LSTM:
             # Recompute logits from predictions
             logits = tf.log(prediction)
 
-            return logits, prediction
+        return logits, prediction
+
+    @staticmethod
+    def multilayer_perceptron(x, in_size, h1_size, h2_size, out_size):
+        #weight = tf.get_variable(name='weight', shape=[in_size, out_size], initializer=tf.truncated_normal_initializer(stddev=0.01))
+        #bias = tf.get_variable(name='bias', shape=[out_size], initializer=tf.constant_initializer(0.1))
+        #logits = tf.matmul(output, weight) + bias
+        #return logits
+
+        weights = {
+            'h1': tf.get_variable(name='h1', shape=[in_size, h1_size], initializer=tf.truncated_normal_initializer(stddev=0.01)), 
+            'h2': tf.get_variable(name='h2', shape=[h1_size, h2_size], initializer=tf.truncated_normal_initializer(stddev=0.01)), 
+            #'out': tf.get_variable(name='out', shape=[h2_size, out_size], initializer=tf.truncated_normal_initializer(stddev=0.01))
+            'out': tf.get_variable(name='out', shape=[h1_size, out_size], initializer=tf.truncated_normal_initializer(stddev=0.01))
+        }
+        biases = {
+            'b1': tf.get_variable(name='bias_1', shape=[h1_size], initializer=tf.constant_initializer(0.1)),
+            'b2': tf.get_variable(name='bias_2', shape=[h2_size], initializer=tf.constant_initializer(0.1)),
+            'out': tf.get_variable(name='bias_out', shape=[out_size], initializer=tf.constant_initializer(0.1))
+        }
+
+        # Hidden layer with RELU activation
+        layer_1 = tf.add(tf.matmul(x, weights['h1']), biases['b1'])
+        layer_1 = tf.nn.elu(layer_1)
+        # Hidden layer with RELU activation
+        #layer_2 = tf.add(tf.matmul(layer_1, weights['h2']), biases['b2'])
+        #layer_2 = tf.nn.elu(layer_2)
+        # Output layer with linear activation
+        #out_layer = tf.matmul(layer_2, weights['out']) + biases['out']
+        out_layer = tf.matmul(layer_1, weights['out']) + biases['out']
+        return out_layer
+
 
 
     def get_cost(self, entropy_reg, lambda_l2_reg):
@@ -240,6 +270,8 @@ if __name__ == '__main__':
     parser.add_argument('-num_hidden', help='Number of hidden nodes per layer', type=int, default=150)
     parser.add_argument('-num_layers', help='Number of hidden layers. If = 1, this is a normal LSTM ' \
                         'othersiwe this is the number of stacked LSTM layers', type=int, default=1)
+    parser.add_argument('-mlp_h1_size', type=int, default=150)
+    parser.add_argument('-mlp_h2_size', type=int, default=75)
 
     # Regularization Parameters
     parser.add_argument('-dropout_prob', help='Value for dropout when training. If left unset, there will be'\
@@ -298,7 +330,7 @@ if __name__ == '__main__':
                  entropy_reg=entropy_reg, gradient_limit=gradient_limit,
                  init_learning_rate=init_learning_rate, decay_steps=decay_steps,
                  decay_rate=decay_rate, num_hidden=num_hidden, num_layers=num_layers,
-                 lambda_l2_reg=lambda_l2_reg)
+                 lambda_l2_reg=lambda_l2_reg, mlp_h1_size=mlp_h1_size, mlp_h2_size=mlp_h2_size)
 
     writer = tf.summary.FileWriter(graph_log_path)
 
