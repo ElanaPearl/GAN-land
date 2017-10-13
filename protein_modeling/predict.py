@@ -16,7 +16,7 @@ class MutationPrediction:
     def __init__(self, MSA):
         self.MSA = MSA
         self.res_fn = tools.get_results_filename(self.MSA.gene_name)
-        feature_to_predict = tools.feature_to_predict(self.MSA.gene_name)
+        feature_to_predict = tools.feature_to_predict[self.MSA.gene_name]
 
         self.wildtype_d = np.reshape(self.MSA.str_to_one_hot(self.MSA.trimmed_ref_seq), (1, self.MSA.max_seq_len, tools.alphabet_len))
         self.wildtype_t = np.reshape(self.MSA.str_to_one_hot(self.MSA.trimmed_ref_seq[1:] + tools.END_TOKEN), (1, self.MSA.max_seq_len, tools.alphabet_len))

@@ -85,15 +85,17 @@ if __name__ == '__main__':
     data = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='data')
     target = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='target')
     dropout = tf.placeholder_with_default(0.0, shape=(), name='dropout')
-    corr_tensor = tf.placeholder(tf.float32, name='spear_corr')
 
-    #predictor = MutationPrediction(MSA)
+    #corr_tensor = tf.placeholder(tf.float32, name='spear_corr')
+    #corr_summ_tensor = tf.summary.scalar('spear_corr', corr_tensor)
+
+    predictor = MutationPrediction(MSA)
 
     print "Constructing model"
     model = LSTM(data, target, dropout=dropout, args=parser.parse_args())
 
+    # Set up writers
     writer = tf.summary.FileWriter(graph_log_path)
-
     sess = tf.Session()
     summaries = tf.summary.merge_all()
 
@@ -111,8 +113,6 @@ if __name__ == '__main__':
         saver = tf.train.Saver()
         saver.restore(sess, last_ckpt)
 
-        pretrained_epochs, pretrained_batches = int(last_ckpt.split('_')[-2]), int(last_ckpt.split('_')[-1])
-        print "Picking up with epoch {} and batch {}".format(pretrained_epochs, pretrained_batches)
     else:
         saver = tf.train.Saver()
         pretrained_epochs = 0
@@ -122,8 +122,6 @@ if __name__ == '__main__':
     num_batches_per_epoch = int(float(MSA.train_size) / batch_size)
 
     print "Starting training"
-
-
     for epoch in range(pretrained_epochs, num_epochs):
         logging.info("Epoch: {}".format(epoch))
 
@@ -141,41 +139,33 @@ if __name__ == '__main__':
 
                 writer.add_summary(summ, epoch * num_batches_per_epoch + i)
 
-                logging.info("target: {}".format(MSA.one_hot_to_str(test_target[0])))
-                logging.info("pred:   {}".format(MSA.one_hot_to_str(test_pred[0])))
+                #logging.info("target: {}".format(MSA.one_hot_to_str(test_target[0])))
+                #logging.info("pred:   {}".format(MSA.one_hot_to_str(test_pred[0])))
 
                 # GENERATE RANDOM SAMPLE
-                seq_sample = model.generate_seq(sess, MSA.seed_weights)
-                logging.info("gen:    {}".format(seq_sample))
+                #seq_sample = model.generate_seq(sess, MSA.seed_weights)
+                #logging.info("gen:    {}".format(seq_sample))
 
                 # COMPARE PREDICTIONS TO EXPERIMENTAL RESULTS
-                """
-                mutant_preds, spear_corr = predictor.corr(sess, model, data, target)
-                corr_summary = sess.run(corr_summ_tensor, {corr_tensor: spear_corr})
-                writer.add_summary(corr_summary, epoch*num_batches_per_epoch + i)
+                
+                #mutant_preds, spear_corr = predictor.corr(sess, model, data, target)
+                #corr_summary = sess.run(corr_summ_tensor, {corr_tensor: spear_corr})
 
-                with open(os.path.join(mutant_pred_path, '{}.pkl'.format(epoch*num_batches_per_epoch + i)), 'w') as f:
-                    pickle.dump(mutant_preds, f)
-
+                #with open(os.path.join(mutant_pred_path, '{}.pkl'.format(epoch*num_batches_per_epoch + i)), 'w') as f:
+                #    pickle.dump(mutant_preds, f)
 
                 # MAKE PLOT OF ALL SINGLE MUTATIONS
-                single_mutant_preds = predictor.plot_single_mutants(sess, model, data, target,
-                                              os.path.join(mutant_pred_path, '{}.png'.format(epoch*num_batches_per_epoch + i)))
-                """
-
+                #single_mutant_preds = predictor.plot_single_mutants(sess, model, data, target,
+                #                              os.path.join(mutant_pred_path, '{}.png'.format(epoch*num_batches_per_epoch + i)))
+            
 
             batch_data, batch_target = MSA.next_batch(batch_size)
 
-            _, summ, train_err = sess.run([model.optimize, summaries, model.error], \
+            _, summ, train_err = sess.run([model.optimize, summaries, model.cross_entropy], \
                                                                {data: batch_data, target: batch_target, dropout: dropout_prob})
 
             writer.add_summary(summ, epoch * num_batches_per_epoch + i)
 
 
         test_data, test_target = MSA.next_batch(batch_size, test=True)
-        logging.info("Error: {}".format(sess.run(model.error, {data: test_data, target: test_target})))
-
-
-        # The number of batches of a given epoch that we already trained is only relevant
-        # to the first epoch we train after we restore the model
-        pretrained_batches = 0
+        logging.info("Error: {}".format(sess.run(model.cross_entropy, {data: test_data, target: test_target})))
