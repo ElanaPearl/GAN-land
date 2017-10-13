@@ -86,7 +86,6 @@ if __name__ == '__main__':
     target = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='target')
     dropout = tf.placeholder_with_default(0.0, shape=(), name='dropout')
     corr_tensor = tf.placeholder(tf.float32, name='spear_corr')
-    corr_summ_tensor = tf.summary.scalar('spear_corr', corr_tensor)
 
     #predictor = MutationPrediction(MSA)
 
@@ -96,6 +95,8 @@ if __name__ == '__main__':
     writer = tf.summary.FileWriter(graph_log_path)
 
     sess = tf.Session()
+    summaries = tf.summary.merge_all()
+
     if debug:
         sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         sess.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
@@ -134,12 +135,11 @@ if __name__ == '__main__':
 
                 # GET TEST ERROR
                 test_data, test_target = MSA.next_batch(batch_size, test=True)
-                test_err_summary, test_err, test_pred = sess.run([model.test_error, model.error, model.prediction], \
+                summ, test_pred = sess.run([summaries, model.prediction], \
                                                         {data: test_data, target: test_target})
 
-                logging.info("Batch: {}, Error: {}".format(i, test_err))
 
-                writer.add_summary(test_err_summary, epoch*num_batches_per_epoch + i)
+                writer.add_summary(summ, epoch * num_batches_per_epoch + i)
 
                 logging.info("target: {}".format(MSA.one_hot_to_str(test_target[0])))
                 logging.info("pred:   {}".format(MSA.one_hot_to_str(test_pred[0])))
@@ -163,18 +163,13 @@ if __name__ == '__main__':
                                               os.path.join(mutant_pred_path, '{}.png'.format(epoch*num_batches_per_epoch + i)))
                 """
 
-                #sample_summary = sess.run(model.sample_seq_summary, {seq_placeholder: seq_sample})
-                #writer.add_summary(sample_summary, epoch*num_batches_per_epoch + i)
 
             batch_data, batch_target = MSA.next_batch(batch_size)
 
-            _, train_summaries, train_err_summary, train_err = sess.run([model.optimize, model.train_summaries, model.train_error, model.error], \
+            _, summ, train_err = sess.run([model.optimize, summaries, model.error], \
                                                                {data: batch_data, target: batch_target, dropout: dropout_prob})
 
-            for summary in train_summaries:
-                writer.add_summary(summary, epoch*num_batches_per_epoch + i)
-
-            writer.add_summary(train_err_summary, epoch*num_batches_per_epoch + i)
+            writer.add_summary(summ, epoch * num_batches_per_epoch + i)
 
 
         test_data, test_target = MSA.next_batch(batch_size, test=True)
