@@ -91,9 +91,12 @@ class LSTM:
 
         logits = self.multilayer_perceptron(output, self._num_hidden, self.mlp_h1_size, self.mlp_h2_size, self.alphabet_len)
 
-        # Flatten to apply same weights to all time steps
-        with tf.variable_scope('softmax_logits'):  
-            prediction = tf.nn.softmax(logits)
+        with tf.variable_scope('softmax_logits'):
+
+            # Subtract max logit from all logits before softmaxing
+            logit_pre_softmax = tf.reshape(logits, [-1, self.max_length, self.alphabet_len])
+            logits_max_red = logit_pre_softmax - tf.reduce_max(logit_pre_softmax, reduction_indices=2, keep_dims=True)
+            prediction = tf.nn.softmax(logits_max_red, axis=2)
             prediction = tf.reshape(prediction, [-1, self.max_length, self.alphabet_len])
             logits = tf.reshape(logits, [-1, self.max_length, self.alphabet_len])
 
@@ -106,7 +109,6 @@ class LSTM:
 
             # Recompute logits from predictions
             logits = tf.log(prediction)
-
         return logits, prediction
 
     @staticmethod
@@ -132,13 +134,12 @@ class LSTM:
         layer_1 = tf.add(tf.matmul(x, weights['h1']), biases['b1'])
         layer_1 = tf.nn.elu(layer_1)
         # Hidden layer with RELU activation
-        #layer_2 = tf.add(tf.matmul(layer_1, weights['h2']), biases['b2'])
-        #layer_2 = tf.nn.elu(layer_2)
+        # layer_2 = tf.add(tf.matmul(layer_1, weights['h2']), biases['b2'])
+        # layer_2 = tf.nn.elu(layer_2)
         # Output layer with linear activation
         #out_layer = tf.matmul(layer_2, weights['out']) + biases['out']
         out_layer = tf.matmul(layer_1, weights['out']) + biases['out']
         return out_layer
-
 
 
     def get_cost(self, entropy_reg, lambda_l2_reg):
@@ -214,6 +215,7 @@ class LSTM:
             q = q[:,:,:-1]
 
 
+        q -= tf.reduce_max(q, reduction_indices=2, keep_dims=True)
 
         cross_entropy = - p * (q - tf.reduce_logsumexp(q, axis=2, keep_dims=True))
         cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=2)
@@ -367,8 +369,11 @@ if __name__ == '__main__':
     # TODO: DELETE THIS!!!
     #batch_data, batch_target = MSA.next_batch(batch_size)
 
+
     for epoch in range(pretrained_epochs, num_epochs):
         logging.info("Epoch: {}".format(epoch))
+
+        
 
         for i in range(pretrained_batches, num_batches_per_epoch):
             if i % batch_size == 0:
@@ -408,11 +413,10 @@ if __name__ == '__main__':
                                               os.path.join(mutant_pred_path, '{}.png'.format(epoch*num_batches_per_epoch + i)))
 
 
-
                 #sample_summary = sess.run(model.sample_seq_summary, {seq_placeholder: seq_sample})
                 #writer.add_summary(sample_summary, epoch*num_batches_per_epoch + i)
 
-            batch_data, batch_target = MSA.next_batch(batch_size)
+            batch_data, batch_target = MSA.next_batch(batch_size
 
             _, train_summaries, train_err_summary, train_err = sess.run([model.optimize, model.train_summaries, model.train_error, model.error], \
                                                                {data: batch_data, target: batch_target, dropout: dropout_prob})
