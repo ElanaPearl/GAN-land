@@ -50,11 +50,11 @@ if __name__ == '__main__':
     # NOTES TO SELF:
     parser.add_argument('-note', help='Just 4 u', default='')
 
+    # Set run time (or restore run_time from last run)
+    run_time = restore_path if parser.parse_args().restore_path else datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
     # Create dictionary of the parsed args and convert each arg into a local variable
     locals().update(vars(parser.parse_args()))
-
-    # Set run time (or restore run_time from last run)
-    run_time = restore_path if restore_path else datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     # Set up logging directories
     log_path = os.path.join('model_logs', gene_name, run_time)
@@ -72,9 +72,12 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, filename=os.path.join(log_path, 'logfile.txt'),
                     format='%(asctime)-15s %(message)s')
 
-    # Log the parameter values
+    # Log and save the parameter values
     for param_name, param_value in vars(parser.parse_args()).iteritems():
         logging.info("{}: {}".format(param_name, param_value))
+
+    with open(os.path.join('model_logs', gene_name, run_time, 'args.pkl')) as f:
+        pickle.dump(parser.parse_args(), f)
 
     print "Getting multiple sequence alignment"
     MSA = MultipleSequenceAlignment(gene_name, run_time=run_time, use_full_seqs=use_full_seqs)
@@ -85,7 +88,7 @@ if __name__ == '__main__':
     corr_tensor = tf.placeholder(tf.float32, name='spear_corr')
     corr_summ_tensor = tf.summary.scalar('spear_corr', corr_tensor)
 
-    #predictor = MutationPrediction(MSA, tools.feature_to_predict[gene_name])
+    #predictor = MutationPrediction(MSA)
 
     print "Constructing model"
     model = LSTM(data, target, dropout=dropout, attn_length=attn_length,

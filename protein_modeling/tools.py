@@ -6,7 +6,7 @@ import matplotlib.colors as colors
 # USEFUL VARIABLES AND THINGS
 GAP = '-'
 END_TOKEN = '*'
-alphabet = 'ACDEFGHIKLMNPQRSTVWY*'
+alphabet = 'ACDEFGHIKLMNPQRSTVWY-*' # NOTE: THIS IS FOR ALPHABET ~WITH~ GAPS
 alphabet_len = len(alphabet)
 
 alphabet_map = {s: i for i, s in enumerate(alphabet)}
