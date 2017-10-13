@@ -9,6 +9,8 @@ import os
 
 import tools
 
+#CURRICULUM_LIMIT = 50
+CURRICULUM_LIMIT = 0
 
 class MultipleSequenceAlignment:
     def __init__(self, gene_name, run_time, use_full_seqs=None, seq_limit=None):
@@ -24,12 +26,15 @@ class MultipleSequenceAlignment:
         self.trimmed_ref_seq = None
         self.seqs = self._read_data(filename, seq_limit)
 
+        with open('BLAT_SEQS', 'w') as f:
+            pickle.dump(self.seqs, f)
+
         # GET METADATA ABOUT SEQUENCES
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
         self.num_seqs = len(self.seqs)
 
         # GET WEIGHTS FOR SEQUENCES
-        seq_log_path = make_path('seq_weights.pkl')   
+        seq_log_path = make_path('seq_weights.pkl')
         logging.info("CALCULATING SEQ WEIGHTS")
         self.seq_weights = tools.lazy_calculate(self.calc_seq_weights, seq_log_path)
 
@@ -78,6 +83,10 @@ class MultipleSequenceAlignment:
 
         # Remove gaps
         self.seqs = tools.remove_gaps(self.seqs)
+
+        # CURRICULUM ADJUSTMENT
+        #if CURRICULUM_LIMIT:
+        #    self.seqs = {k: v[:CURRICULUM_LIMIT] for k,v in self.seqs.iteritems()}
 
         # Re-adjust the max sequence length
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
@@ -180,7 +189,7 @@ class MultipleSequenceAlignment:
         return ''.join(decoded_seq)
 
 
-    def next_batch(self, batch_size, test=False):
+    def next_batch(self, batch_size, test=False, CURRICULUM_LIMIT=None):
         """ Generate a minibatch of train or test data: inputs and outputs.
         Creates an array of size batch_size x max_seq_length x alphabet_len
         and fills it with the one-hot encoded versions of batch_size number of
@@ -207,24 +216,28 @@ class MultipleSequenceAlignment:
                                     p=unused_seq_info.values()/sum(unused_seq_info.values()))
 
                 seq = self.seqs[self.seqs.keys()[idx]]
+
+                if CURRICULUM_LIMIT:
+                    seq = seq[:CURRICULUM_LIMIT]
+                
                 mb[i] = self.str_to_one_hot(seq)
                 output_mb[i] = self.str_to_one_hot(seq[1:] + tools.END_TOKEN)
 
                 # Pop the seq off so that you don't use it again
-                del unused_seq_info[idx]
+                #del unused_seq_info[idx]
 
             # If there aren't enough sequences to fill the minibatch
             else:
-
+                import pdb;pdb.set_trace()
                 # This is necessary
                 mb = mb[:i]
                 output_mb = output_mb[:i]
 
                 # Set up the training ids for the next epoch
-                if test:
-                    self.unused_test_idx = dict(zip(self.test_idx, self.seq_weights[self.test_idx]))
-                else:
-                    self.unused_train_idx = dict(zip(self.train_idx, self.seq_weights[self.test_idx]))
+                #if test:
+                #    self.unused_test_idx = dict(zip(self.test_idx, self.seq_weights[self.test_idx]))
+                #else:
+                #    self.unused_train_idx = dict(zip(self.train_idx, self.seq_weights[self.test_idx]))
                 break
 
         return mb, output_mb
