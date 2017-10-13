@@ -120,17 +120,17 @@ class MutationPrediction:
         mutation_preds = self.predict_mutations(sess, model, data, target, self.mutated_d, self.mutated_t)
         assert(len(self.measured) == len(mutation_preds))
 
-        return spearmanr(self.measured, mutation_preds).correlation
+        return mutation_preds, spearmanr(self.measured, mutation_preds).correlation
 
 
     def plot_single_mutants(self, sess, model, data, target, fn):
-        mutation_preds = self.predict_mutations(sess, model, data, target, self.single_mutated_d, self.single_mutated_t)
-        mutation_preds = np.reshape(mutation_preds,(len(self.MSA.trimmed_ref_seq), tools.alphabet_len)).T
+        mutation_preds_list = self.predict_mutations(sess, model, data, target, self.single_mutated_d, self.single_mutated_t)
+        mutation_preds = np.reshape(mutation_preds_list,(len(self.MSA.trimmed_ref_seq), tools.alphabet_len)).T
 
         # Plot it out
         fig, ax = plt.subplots()
         #heatmap = ax.pcolor(mutation_preds, cmap="Blues_r", vmin=-1.5, vmax=0.0)
-        heatmap = ax.pcolor(mutation_preds, cmap="Blues_r")
+        heatmap = ax.pcolor(mutation_preds, cmap="bwr", norm=tools.MidpointNormalize(midpoint=0))
 
         # Format
         fig = plt.gcf()
@@ -169,6 +169,8 @@ class MutationPrediction:
 
         plt.savefig(fn)
         plt.clf()
+
+        return mutation_preds_list
 
 
 
