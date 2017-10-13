@@ -1,3 +1,17 @@
+from datetime import datetime
+import cPickle as pickle
+import argparse
+import logging
+import os
+
+import tensorflow as tf
+import numpy as np
+from data_handler import MultipleSequenceAlignment
+from predict import MutationPrediction
+import tools
+from tensorflow.python import debug as tf_debug
+from model import LSTM
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
@@ -63,7 +77,7 @@ if __name__ == '__main__':
         logging.info("{}: {}".format(param_name, param_value))
 
     print "Getting multiple sequence alignment"
-    MSA = MultipleSequenceAlignment(gene_name, run_time=run_time, seq_limit=seq_limit, use_full_seqs=use_full_seqs)
+    MSA = MultipleSequenceAlignment(gene_name, run_time=run_time, use_full_seqs=use_full_seqs)
 
     data = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='data')
     target = tf.placeholder(tf.float32, [None, MSA.max_seq_len, tools.alphabet_len], name='target')
@@ -71,7 +85,7 @@ if __name__ == '__main__':
     corr_tensor = tf.placeholder(tf.float32, name='spear_corr')
     corr_summ_tensor = tf.summary.scalar('spear_corr', corr_tensor)
 
-    predictor = MutationPrediction(MSA, tools.feature_to_predict[gene_name])
+    #predictor = MutationPrediction(MSA, tools.feature_to_predict[gene_name])
 
     print "Constructing model"
     model = LSTM(data, target, dropout=dropout, attn_length=attn_length,
@@ -105,15 +119,9 @@ if __name__ == '__main__':
         pretrained_batches = 0
 
 
-    num_batches_per_epoch = int(ceil(float(MSA.train_size) / batch_size))
-
-    LAST_ERROR = 10000.0
-    MAX_DELTA_ERROR = 0.0
+    num_batches_per_epoch = int(float(MSA.train_size) / batch_size)
 
     print "Starting training"
-
-    # TODO: DELETE THIS!!!
-    #batch_data, batch_target = MSA.next_batch(batch_size)
 
 
     for epoch in range(pretrained_epochs, num_epochs):
@@ -124,10 +132,6 @@ if __name__ == '__main__':
         for i in range(pretrained_batches, num_batches_per_epoch):
             if i % batch_size == 0:
                 saver.save(sess, os.path.join(checkpoint_log_path,'model_{}_{}'.format(epoch,i)))
-
-                # PRINT MAX ERROR
-                logging.info("MAX DELTA ERROR: {}".format(MAX_DELTA_ERROR))
-                print "MAX DELTA ERROR: ", MAX_DELTA_ERROR
 
                 # GET TEST ERROR
                 test_data, test_target = MSA.next_batch(batch_size, test=True)
@@ -146,6 +150,7 @@ if __name__ == '__main__':
                 logging.info("gen:    {}".format(seq_sample))
 
                 # COMPARE PREDICTIONS TO EXPERIMENTAL RESULTS
+                """
                 mutant_preds, spear_corr = predictor.corr(sess, model, data, target)
                 corr_summary = sess.run(corr_summ_tensor, {corr_tensor: spear_corr})
                 writer.add_summary(corr_summary, epoch*num_batches_per_epoch + i)
@@ -157,12 +162,12 @@ if __name__ == '__main__':
                 # MAKE PLOT OF ALL SINGLE MUTATIONS
                 single_mutant_preds = predictor.plot_single_mutants(sess, model, data, target,
                                               os.path.join(mutant_pred_path, '{}.png'.format(epoch*num_batches_per_epoch + i)))
-
+                """
 
                 #sample_summary = sess.run(model.sample_seq_summary, {seq_placeholder: seq_sample})
                 #writer.add_summary(sample_summary, epoch*num_batches_per_epoch + i)
 
-            batch_data, batch_target = MSA.next_batch(batch_size
+            batch_data, batch_target = MSA.next_batch(batch_size)
 
             _, train_summaries, train_err_summary, train_err = sess.run([model.optimize, model.train_summaries, model.train_error, model.error], \
                                                                {data: batch_data, target: batch_target, dropout: dropout_prob})
@@ -172,15 +177,6 @@ if __name__ == '__main__':
 
             writer.add_summary(train_err_summary, epoch*num_batches_per_epoch + i)
 
-            if train_err - LAST_ERROR > MAX_DELTA_ERROR:
-                MAX_DELTA_ERROR = train_err - LAST_ERROR
-
-            if train_err >= .1 + LAST_ERROR:
-                logging.info("{}: err increaed by {}".format(epoch*num_batches_per_epoch + i, train_err-LAST_ERROR))
-                with open(os.path.join(log_path, 'batch_{}.pkl'.format(epoch*num_batches_per_epoch + i)), 'w') as f:
-                    pickle.dump(batch_data, f)
-
-            LAST_ERROR = train_err
 
         test_data, test_target = MSA.next_batch(batch_size, test=True)
         logging.info("Error: {}".format(sess.run(model.error, {data: test_data, target: test_target})))

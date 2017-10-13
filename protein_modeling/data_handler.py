@@ -9,11 +9,9 @@ import os
 
 import tools
 
-#CURRICULUM_LIMIT = 50
-CURRICULUM_LIMIT = 0
 
 class MultipleSequenceAlignment:
-    def __init__(self, gene_name, run_time, use_full_seqs=None, seq_limit=None):
+    def __init__(self, gene_name, run_time, use_full_seqs=True):
         self.gene_name = gene_name
         filename = os.path.join('alignments', tools.get_alignment_filename(gene_name))
         make_path = lambda x: os.path.join('model_logs', gene_name, x)
@@ -24,10 +22,7 @@ class MultipleSequenceAlignment:
         # READ IN DATA
         self.full_ref_seq = None
         self.trimmed_ref_seq = None
-        self.seqs = self._read_data(filename, seq_limit)
-
-        with open('BLAT_SEQS', 'w') as f:
-            pickle.dump(self.seqs, f)
+        self.seqs = self._read_data(filename)
 
         # GET METADATA ABOUT SEQUENCES
         self.max_seq_len = max(len(seq) for seq in self.seqs.values())
@@ -42,33 +37,6 @@ class MultipleSequenceAlignment:
         cluster_path = make_path('clusters_{}.pkl'.format(tools.n_clusters))
         self.seq_clusters = tools.lazy_calculate(self.cluster_seqs, cluster_path)
 
-        # IF USE FULL SEQS
-        if use_full_seqs:
-            print "PRE AVG LEN: ", sum(len(seq) for seq in self.seqs.values()) / float(len(self.seqs))
-            
-            with open(make_path('full_seqs.pkl')) as f:
-                full_seq_dict = pickle.load(f)
-
-            # REMOVE SEQS THAT HAVE NON ALPHABET CHARS IN FULL VERSION (AND THUS WERE TRIMMED OUT)
-            seq_mask = [seq_name.split('/')[0].split('|')[-1] in full_seq_dict for seq_name in self.seqs.keys()]
-            print len(self.seq_weights), len(self.seq_clusters)
-            self.seq_weights = self.seq_weights[seq_mask]
-            self.seq_clusters = self.seq_clusters[seq_mask]
-            print len(self.seq_weights), len(self.seq_clusters)
-
-            for seq_name in self.seqs.keys():
-                trim_seq_name = seq_name.split('/')[0].split('|')[-1]
-                del self.seqs[seq_name]
-                if trim_seq_name in full_seq_dict:
-                    self.seqs[seq_name] = full_seq_dict[trim_seq_name]
-
-            print "POST AVG LEN: ", sum(len(seq) for seq in self.seqs.values()) / float(len(self.seqs))
-
-            # ADJUST META INFO
-            self.max_seq_len = max(len(seq) for seq in self.seqs.values())
-            self.num_seqs = len(self.seqs)
-
-
         # SELECT TEST AND TRAIN SET
         test_id_path = make_path(os.path.join(run_time, 'test_ids.pkl'))
         self.test_idx = tools.lazy_calculate(self.choose_test_set, test_id_path)
@@ -82,14 +50,11 @@ class MultipleSequenceAlignment:
         self.unused_train_idx = dict(zip(self.train_idx, self.seq_weights[self.train_idx]))
 
         # Remove gaps
-        self.seqs = tools.remove_gaps(self.seqs)
+        if not use_full_seqs:
+            self.seqs = tools.remove_gaps(self.seqs)
 
-        # CURRICULUM ADJUSTMENT
-        #if CURRICULUM_LIMIT:
-        #    self.seqs = {k: v[:CURRICULUM_LIMIT] for k,v in self.seqs.iteritems()}
-
-        # Re-adjust the max sequence length
-        self.max_seq_len = max(len(seq) for seq in self.seqs.values())
+            # Re-adjust the max sequence length
+            self.max_seq_len = max(len(seq) for seq in self.seqs.values())
 
         # GET DIST OF FIRST ELEMENT OF SEQS (for generation purposes)
         seed_weight_path = make_path('seed_weights.pkl')
@@ -134,16 +99,13 @@ class MultipleSequenceAlignment:
     def calc_seq_weights(self):
         print "CALCULATING SEQ WEIGHTS"
         # Create encoded version of all of the data
-        logging.info('ENCODING')
         encoded_seqs = self.encode_all()
 
         X = tf.placeholder(tf.float32, [self.num_seqs, self.max_seq_len, tools.alphabet_len], name="X_flat")
         X_flat = tf.reshape(X, [self.num_seqs, self.max_seq_len * tools.alphabet_len])
 
-        logging.info('MAPPING')
         weights = tf.map_fn(lambda x: 1.0/ tf.reduce_sum(tf.cast(tf.reduce_sum(tf.multiply(X_flat, x), axis=1) / tf.reduce_sum(x) > 1 - tools.similarity_cutoff, tf.float32)), X_flat)
 
-        logging.info('RUNNING THE DATA THROUGH')
         with tf.Session() as sess:
             return sess.run(weights, feed_dict={X: encoded_seqs})
 
@@ -181,7 +143,6 @@ class MultipleSequenceAlignment:
         """
 
         # Trim off the end (after the end token)
-        #import pdb; pdb.set_trace()
         trimmed_seq = seq[:int(np.sum(seq))]
 
         encoded_seq = np.argmax(trimmed_seq, 1)
@@ -189,7 +150,7 @@ class MultipleSequenceAlignment:
         return ''.join(decoded_seq)
 
 
-    def next_batch(self, batch_size, test=False, CURRICULUM_LIMIT=None):
+    def next_batch(self, batch_size, test=False):
         """ Generate a minibatch of train or test data: inputs and outputs.
         Creates an array of size batch_size x max_seq_length x alphabet_len
         and fills it with the one-hot encoded versions of batch_size number of
@@ -202,43 +163,19 @@ class MultipleSequenceAlignment:
         mb = np.zeros((batch_size, self.max_seq_len, tools.alphabet_len))
         output_mb = np.zeros((batch_size, self.max_seq_len, tools.alphabet_len))
 
-
         if test:
             unused_seq_info = self.unused_test_idx
         else:
             unused_seq_info = self.unused_train_idx
 
-
         for i in range(batch_size):      
-            # Check if there are any seqs left in this epoch
-            if len(unused_seq_info) > 0:
-                idx = np.random.choice(unused_seq_info.keys(), \
-                                    p=unused_seq_info.values()/sum(unused_seq_info.values()))
+            idx = np.random.choice(unused_seq_info.keys(), \
+                                p=unused_seq_info.values()/sum(unused_seq_info.values()))
 
-                seq = self.seqs[self.seqs.keys()[idx]]
-
-                if CURRICULUM_LIMIT:
-                    seq = seq[:CURRICULUM_LIMIT]
-                
-                mb[i] = self.str_to_one_hot(seq)
-                output_mb[i] = self.str_to_one_hot(seq[1:] + tools.END_TOKEN)
-
-                # Pop the seq off so that you don't use it again
-                #del unused_seq_info[idx]
-
-            # If there aren't enough sequences to fill the minibatch
-            else:
-                import pdb;pdb.set_trace()
-                # This is necessary
-                mb = mb[:i]
-                output_mb = output_mb[:i]
-
-                # Set up the training ids for the next epoch
-                #if test:
-                #    self.unused_test_idx = dict(zip(self.test_idx, self.seq_weights[self.test_idx]))
-                #else:
-                #    self.unused_train_idx = dict(zip(self.train_idx, self.seq_weights[self.test_idx]))
-                break
+            seq = self.seqs[self.seqs.keys()[idx]]
+            
+            mb[i] = self.str_to_one_hot(seq)
+            output_mb[i] = self.str_to_one_hot(seq[1:] + tools.END_TOKEN)
 
         return mb, output_mb
 
@@ -266,12 +203,8 @@ class MultipleSequenceAlignment:
         if not ignore_this_seq:
             self.seqs[curr_id] = cleaned_seq
 
-            if not self.full_ref_seq:
-                self.full_ref_seq = curr_seq
-                self.trimmed_ref_seq = cleaned_seq
 
-
-    def _read_data(self, filename, seq_limit=None):
+    def _read_data(self, filename):
         """ Converts data into
 
         Reads in the a2m alignment file an converts it into a dictionary where
@@ -291,9 +224,6 @@ class MultipleSequenceAlignment:
                 if line.startswith(">"):
                     if current_id is not None:
                         self._add_sequence(current_id, current_sequence)
-
-                        if seq_limit and len(self.seqs) == seq_limit:
-                            return self.seqs
 
                     current_id = line.rstrip()[1:]
                     current_sequence = ""

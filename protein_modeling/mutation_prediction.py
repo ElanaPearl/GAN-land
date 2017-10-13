@@ -1,12 +1,12 @@
 import tensorflow as tf
-import pandas as pd
+
 import numpy as np
 import argparse
 import os
 
-from model_w_label import MultipleSequenceAlignment
+from data_handler import MultipleSequenceAlignment
 from predict import MutationPrediction
-from LSTM import LSTM
+from model import LSTM
 import tools
 
 if __name__ == '__main__':
