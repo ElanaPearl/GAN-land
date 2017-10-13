@@ -76,7 +76,7 @@ if __name__ == '__main__':
     for param_name, param_value in vars(parser.parse_args()).iteritems():
         logging.info("{}: {}".format(param_name, param_value))
 
-    with open(os.path.join('model_logs', gene_name, run_time, 'args.pkl')) as f:
+    with open(os.path.join('model_logs', gene_name, run_time, 'args.pkl'), 'w') as f:
         pickle.dump(parser.parse_args(), f)
 
     print "Getting multiple sequence alignment"
@@ -91,11 +91,7 @@ if __name__ == '__main__':
     #predictor = MutationPrediction(MSA)
 
     print "Constructing model"
-    model = LSTM(data, target, dropout=dropout, attn_length=attn_length,
-                 entropy_reg=entropy_reg, gradient_limit=gradient_limit,
-                 init_learning_rate=init_learning_rate, decay_steps=decay_steps,
-                 decay_rate=decay_rate, num_hidden=num_hidden, num_layers=num_layers,
-                 lambda_l2_reg=lambda_l2_reg, mlp_h1_size=mlp_h1_size, mlp_h2_size=mlp_h2_size)
+    model = LSTM(data, target, dropout=dropout, args=parser.parse_args())
 
     writer = tf.summary.FileWriter(graph_log_path)
 

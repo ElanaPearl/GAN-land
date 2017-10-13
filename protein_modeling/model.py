@@ -4,22 +4,21 @@ from tools import rev_alphabet_map
 
 
 class LSTM:
-    def __init__(self, data, target, dropout, attn_length, entropy_reg, lambda_l2_reg, gradient_limit,
-                num_hidden, num_layers, init_learning_rate, decay_steps, decay_rate, mlp_h1_size, mlp_h2_size):
+    def __init__(self, data, target, dropout, args):
         self.data = data
         self.target = target
         self.dropout = dropout
-        self.attn_length = attn_length
+        self.attn_length = args.attn_length
 
         self.max_length = int(self.target.get_shape()[1])
         self.alphabet_len = int(self.target.get_shape()[2])
 
-        self._num_hidden = num_hidden
-        self._num_layers = num_layers
+        self._num_hidden = args.num_hidden
+        self._num_layers = args.num_layers
         self.length = self.get_length()
 
-        self.mlp_h1_size = mlp_h1_size
-        self.mlp_h2_size = mlp_h2_size
+        self.mlp_h1_size = args.mlp_h1_size
+        self.mlp_h2_size = args.mlp_h2_size
 
         with tf.variable_scope('prediction'):
             self.logits, self.prediction = self.get_prediction()
@@ -32,11 +31,11 @@ class LSTM:
         self.cross_entropy = self.get_cross_entropy(self.target, self.logits)
         self.entropy = self.get_cross_entropy(self.prediction, self.logits, ignore_end_token=True)
 
-        self.cost, cross_ent_summary, ent_summary = self.get_cost(entropy_reg, lambda_l2_reg)
-        self.optimize, gradient_summary, unnorm_grad_summary = self.get_optimizer(gradient_limit,
-                                                            init_learning_rate,
-                                                            decay_steps,
-                                                            decay_rate)
+        self.cost, cross_ent_summary, ent_summary = self.get_cost(args.entropy_reg, args.lambda_l2_reg)
+        self.optimize, gradient_summary, unnorm_grad_summary = self.get_optimizer(args.gradient_limit,
+                                                            args.init_learning_rate,
+                                                            args.decay_steps,
+                                                            args.decay_rate)
 
         self.train_summaries = [tf.summary.histogram(v.name, v) for v in tf.trainable_variables()]
         self.train_summaries += [gradient_summary, unnorm_grad_summary, cross_ent_summary, ent_summary]
@@ -44,7 +43,7 @@ class LSTM:
 
     def get_length(self):
         with tf.variable_scope('calc_lengths'):
-            used = tf.sign(tf.reduce_max(tf.abs(self.data), reduction_indices=2))
+            used = tf.sign(tf.reduce_max(self.data, reduction_indices=2))
             length = tf.reduce_sum(used, reduction_indices=1)
             length = tf.cast(length, tf.int32)
             return length
@@ -85,9 +84,9 @@ class LSTM:
 
             # Subtract max logit from all logits before softmaxing
             logit_pre_softmax = tf.reshape(logits, [-1, self.max_length, self.alphabet_len])
-            
+
             logits_max_red = logit_pre_softmax - tf.reduce_max(logit_pre_softmax, reduction_indices=2, keep_dims=True)
-            prediction = tf.nn.softmax(logits_max_red, reduction_indices=2)
+            prediction = tf.nn.softmax(logits_max_red)
             prediction = tf.reshape(prediction, [-1, self.max_length, self.alphabet_len])
             logits = tf.reshape(logits, [-1, self.max_length, self.alphabet_len])
 
@@ -190,7 +189,7 @@ class LSTM:
             mistakes = tf.cast(mistakes, tf.float32, name='mistakes')
 
         with tf.variable_scope('mask_out_unused_positions'):
-            mask = tf.sign(tf.reduce_max(tf.abs(self.target), reduction_indices=2))
+            mask = tf.sign(tf.reduce_max(self.target, reduction_indices=2))
             mistakes *= mask
         # Average over actual sequence lengths.
         with tf.variable_scope('avg_over_seq_len'):
